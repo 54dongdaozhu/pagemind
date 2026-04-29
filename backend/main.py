@@ -1,20 +1,59 @@
 import os
 import json
-import requests
-from typing import List
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DB_PATH = os.path.join(os.path.dirname(__file__), "user_data.db")
 
 if not DEEPSEEK_API_KEY:
     raise ValueError("请在 .env 文件中配置 DEEPSEEK_API_KEY")
+
+
+# ========== 数据库 ==========
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def init_db():
+    """初始化数据库表"""
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_knowledge (
+                kp_text TEXT PRIMARY KEY,
+                kp_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                click_count INTEGER NOT NULL DEFAULT 0,
+                last_clicked_at TEXT,
+                marked_known_at TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+
+init_db()
+
+
+# ========== FastAPI ==========
 
 app = FastAPI(title="AI 学习助手后端")
 
@@ -49,11 +88,30 @@ class ExtractResponse(BaseModel):
 
 class ExplainDeepRequest(BaseModel):
     keyword: str
-    kp_type: str  # "term" or "formula"
-    context: str  # 知识点所在段落的上下文
+    kp_type: str
+    context: str
+
+class ClickRequest(BaseModel):
+    kp_text: str
+    kp_type: str
+
+class MarkKnownRequest(BaseModel):
+    kp_text: str
+    kp_type: str
+
+class UnmarkKnownRequest(BaseModel):
+    kp_text: str
+
+class KnowledgeStatus(BaseModel):
+    kp_text: str
+    status: str
+    click_count: int
+
+class StatusBatchRequest(BaseModel):
+    kp_texts: List[str]
 
 
-# ========== LLM 调用(非流式) ==========
+# ========== LLM 调用 ==========
 
 def call_deepseek(messages: list, temperature: float = 0.3, json_mode: bool = False) -> str:
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
@@ -80,10 +138,7 @@ def call_deepseek(messages: list, temperature: float = 0.3, json_mode: bool = Fa
         raise HTTPException(status_code=500, detail=f"LLM 返回格式异常: {str(e)}")
 
 
-# ========== LLM 调用(流式) ==========
-
 def call_deepseek_stream(messages: list, temperature: float = 0.5):
-    """流式调用 DeepSeek,逐 token 返回"""
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -105,7 +160,7 @@ def call_deepseek_stream(messages: list, temperature: float = 0.5):
                 line = line.decode("utf-8")
                 if not line.startswith("data: "):
                     continue
-                data_str = line[6:]  # 去掉 "data: "
+                data_str = line[6:]
                 if data_str.strip() == "[DONE]":
                     break
                 try:
@@ -124,7 +179,7 @@ def call_deepseek_stream(messages: list, temperature: float = 0.5):
 _extract_cache = {}
 
 
-# ========== 知识点提取(原有) ==========
+# ========== 知识点提取 ==========
 
 EXTRACT_SYSTEM_PROMPT = """你是一个专业的备考辅导助手。你的任务是从学习材料中提取核心知识点,帮助学生抓住重点。
 
@@ -213,7 +268,6 @@ EXPLAIN_DEEP_SYSTEM_PROMPT = """你是一位专业、耐心的备考辅导老师
 
 @app.post("/api/explain-deep")
 def explain_deep(request: ExplainDeepRequest):
-    """对某个知识点进行深度讲解(流式输出)"""
     keyword = request.keyword.strip()
     kp_type = request.kp_type
     context = request.context.strip()
@@ -239,6 +293,151 @@ def explain_deep(request: ExplainDeepRequest):
             yield chunk
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+
+
+# ========== 用户记忆系统 ==========
+
+LEARNING_THRESHOLD = 3  # 点击多少次进入 learning 状态
+
+
+@app.post("/api/knowledge/click")
+def record_click(request: ClickRequest):
+    """记录一次知识点点击,自动更新状态"""
+    now = datetime.utcnow().isoformat()
+    
+    with get_db() as conn:
+        # 查询现有记录
+        row = conn.execute(
+            "SELECT * FROM user_knowledge WHERE kp_text = ?",
+            (request.kp_text,)
+        ).fetchone()
+        
+        if row is None:
+            # 新建记录
+            conn.execute("""
+                INSERT INTO user_knowledge 
+                (kp_text, kp_type, status, click_count, last_clicked_at, created_at)
+                VALUES (?, ?, 'unknown', 1, ?, ?)
+            """, (request.kp_text, request.kp_type, now, now))
+            new_count = 1
+            new_status = 'unknown'
+        else:
+            new_count = row['click_count'] + 1
+            # 已掌握的状态不会因点击降级
+            if row['status'] == 'known':
+                new_status = 'known'
+            elif new_count >= LEARNING_THRESHOLD:
+                new_status = 'learning'
+            else:
+                new_status = 'unknown'
+            
+            conn.execute("""
+                UPDATE user_knowledge 
+                SET click_count = ?, last_clicked_at = ?, status = ?
+                WHERE kp_text = ?
+            """, (new_count, now, new_status, request.kp_text))
+        
+        conn.commit()
+    
+    return {"kp_text": request.kp_text, "status": new_status, "click_count": new_count}
+
+
+@app.post("/api/knowledge/mark-known")
+def mark_known(request: MarkKnownRequest):
+    """标记知识点为已掌握"""
+    now = datetime.utcnow().isoformat()
+    
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM user_knowledge WHERE kp_text = ?",
+            (request.kp_text,)
+        ).fetchone()
+        
+        if row is None:
+            conn.execute("""
+                INSERT INTO user_knowledge 
+                (kp_text, kp_type, status, click_count, marked_known_at, created_at)
+                VALUES (?, ?, 'known', 0, ?, ?)
+            """, (request.kp_text, request.kp_type, now, now))
+        else:
+            conn.execute("""
+                UPDATE user_knowledge 
+                SET status = 'known', marked_known_at = ?
+                WHERE kp_text = ?
+            """, (now, request.kp_text))
+        
+        conn.commit()
+    
+    return {"kp_text": request.kp_text, "status": "known"}
+
+
+@app.post("/api/knowledge/unmark-known")
+def unmark_known(request: UnmarkKnownRequest):
+    """取消已掌握标记,回到 unknown 或 learning 状态"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM user_knowledge WHERE kp_text = ?",
+            (request.kp_text,)
+        ).fetchone()
+        
+        if row is None:
+            return {"kp_text": request.kp_text, "status": "unknown"}
+        
+        # 根据 click_count 判断回到哪个状态
+        new_status = 'learning' if row['click_count'] >= LEARNING_THRESHOLD else 'unknown'
+        conn.execute("""
+            UPDATE user_knowledge 
+            SET status = ?, marked_known_at = NULL
+            WHERE kp_text = ?
+        """, (new_status, request.kp_text))
+        conn.commit()
+    
+    return {"kp_text": request.kp_text, "status": new_status}
+
+
+@app.post("/api/knowledge/status-batch")
+def get_status_batch(request: StatusBatchRequest):
+    """批量查询知识点状态"""
+    if not request.kp_texts:
+        return {"items": []}
+    
+    with get_db() as conn:
+        placeholders = ','.join(['?'] * len(request.kp_texts))
+        rows = conn.execute(
+            f"SELECT kp_text, status, click_count FROM user_knowledge WHERE kp_text IN ({placeholders})",
+            request.kp_texts
+        ).fetchall()
+    
+    items = [
+        {"kp_text": row['kp_text'], "status": row['status'], "click_count": row['click_count']}
+        for row in rows
+    ]
+    return {"items": items}
+
+
+@app.get("/api/knowledge/stats")
+def get_stats():
+    """学习总览统计"""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT status, COUNT(*) as count 
+            FROM user_knowledge 
+            GROUP BY status
+        """).fetchall()
+    
+    stats = {"unknown": 0, "learning": 0, "known": 0}
+    for row in rows:
+        stats[row['status']] = row['count']
+    return stats
+
+
+@app.post("/api/knowledge/reset")
+def reset_all():
+    """清空所有学习记录(测试用)"""
+    with get_db() as conn:
+        conn.execute("DELETE FROM user_knowledge")
+        conn.commit()
+    return {"message": "已重置所有学习记录"}
 
 
 # ========== 健康检查与测试接口 ==========

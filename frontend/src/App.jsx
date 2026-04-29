@@ -43,7 +43,7 @@ function splitIntoChunks(html) {
   return chunks
 }
 
-function highlightFirstMatch(container, keyword, kpId, kpType) {
+function highlightFirstMatch(container, keyword, kpId, kpType, status) {
   if (!keyword || !container) return false
 
   const walker = document.createTreeWalker(
@@ -68,8 +68,9 @@ function highlightFirstMatch(container, keyword, kpId, kpType) {
       const after = text.slice(idx + keyword.length)
 
       const mark = document.createElement('mark')
-      mark.className = `kp-highlight kp-highlight-${kpType}`
+      mark.className = `kp-highlight kp-highlight-${kpType} kp-status-${status || 'unknown'}`
       mark.dataset.kpId = kpId
+      mark.dataset.kpText = keyword
       mark.textContent = keyword
 
       const parent = textNode.parentNode
@@ -87,18 +88,26 @@ function highlightFirstMatch(container, keyword, kpId, kpType) {
   return false
 }
 
-// 在文档中找到知识点所在的段落上下文
 function findContextForKP(container, kpId) {
   if (!container) return ''
   const mark = container.querySelector(`mark[data-kp-id="${kpId}"]`)
   if (!mark) return ''
-  // 向上找最近的块级祖先(p, li, h1-h6, td)
   let node = mark.parentElement
   const blockTags = ['P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TD', 'DIV']
   while (node && !blockTags.includes(node.tagName)) {
     node = node.parentElement
   }
   return node ? node.textContent.trim() : mark.textContent
+}
+
+// 更新 DOM 中所有同名知识点的状态 class
+function updateMarkStatusInDom(container, kpText, status) {
+  if (!container) return
+  const marks = container.querySelectorAll(`mark[data-kp-text="${CSS.escape(kpText)}"]`)
+  marks.forEach(m => {
+    m.classList.remove('kp-status-unknown', 'kp-status-learning', 'kp-status-known')
+    m.classList.add(`kp-status-${status}`)
+  })
 }
 
 // ========== React 组件 ==========
@@ -112,16 +121,22 @@ function App() {
   const [extractProgress, setExtractProgress] = useState({ done: 0, total: 0 })
   const [extracting, setExtracting] = useState(false)
   const [selectedKP, setSelectedKP] = useState(null)
-  
-  // 深度讲解相关
   const [deepExplanation, setDeepExplanation] = useState('')
   const [deepLoading, setDeepLoading] = useState(false)
   const [showDeep, setShowDeep] = useState(false)
 
+  // 知识点状态(kp_text => status)
+  const [kpStatusMap, setKpStatusMap] = useState({})
+  // 是否隐藏已掌握的高亮
+  const [hideKnown, setHideKnown] = useState(true)
+
   const extractingRef = useRef(false)
   const docContentRef = useRef(null)
   const highlightedIdsRef = useRef(new Set())
-  const deepAbortRef = useRef(null)  // 用于中止请求
+  const deepAbortRef = useRef(null)
+
+  // 获取知识点状态(便捷函数)
+  const getKpStatus = (kpText) => kpStatusMap[kpText] || 'unknown'
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
@@ -213,26 +228,66 @@ function App() {
     }
   }
 
-  // 增量高亮
+  // 当 uniqueKPs 变化时,从后端拉取这些知识点的状态
+  useEffect(() => {
+    if (uniqueKPs.length === 0) return
+    const texts = uniqueKPs.map(kp => kp.text)
+    fetch(`${API_BASE}/api/knowledge/status-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kp_texts: texts })
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        const map = {}
+        for (const item of data.items) {
+          map[item.kp_text] = item.status
+        }
+        setKpStatusMap(prev => ({ ...prev, ...map }))
+      })
+      .catch(err => console.error('拉取状态失败:', err))
+  }, [uniqueKPs.length])
+
+  // 增量高亮(带状态)
   useEffect(() => {
     if (!docContentRef.current || !docLoaded) return
 
     for (const kp of uniqueKPs) {
       if (highlightedIdsRef.current.has(kp.id)) continue
-      const success = highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type)
+      const status = getKpStatus(kp.text)
+      const success = highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type, status)
       highlightedIdsRef.current.add(kp.id)
       if (!success) {
         console.log(`未能在文档中找到知识点: "${kp.text}"`)
       }
     }
-  }, [uniqueKPs, docLoaded])
+  }, [uniqueKPs, docLoaded, kpStatusMap])
+
+  // 当 kpStatusMap 变化时,同步更新已存在 mark 的 class
+  useEffect(() => {
+    if (!docContentRef.current) return
+    for (const kpText in kpStatusMap) {
+      updateMarkStatusInDom(docContentRef.current, kpText, kpStatusMap[kpText])
+    }
+  }, [kpStatusMap])
+
+  // 应用 hideKnown 设置
+  useEffect(() => {
+    if (!docContentRef.current) return
+    if (hideKnown) {
+      docContentRef.current.classList.add('hide-known')
+    } else {
+      docContentRef.current.classList.remove('hide-known')
+    }
+  }, [hideKnown, docLoaded])
 
   // 文档点击/双击委托
   useEffect(() => {
     const container = docContentRef.current
     if (!container) return
 
-    const selectMark = (mark) => {
+    const selectMark = async (mark) => {
       const kpId = mark.dataset.kpId
       const kp = uniqueKPs.find(k => k.id === kpId)
       if (kp) {
@@ -241,6 +296,8 @@ function App() {
           el.classList.remove('active')
         })
         mark.classList.add('active')
+        // 上报点击
+        recordClick(kp)
       }
       return kp
     }
@@ -249,17 +306,15 @@ function App() {
       const target = event.target
       if (target.tagName === 'MARK' && target.dataset.kpId) {
         selectMark(target)
-        // 单击不再额外做事(双击会单独处理)
       }
     }
 
     const handleDoubleClick = (event) => {
       const target = event.target
       if (target.tagName === 'MARK' && target.dataset.kpId) {
-        const kp = selectMark(target)
-        if (kp) {
-          startDeepExplain(kp)
-        }
+        selectMark(target).then(kp => {
+          if (kp) startDeepExplain(kp)
+        })
       }
     }
 
@@ -269,11 +324,48 @@ function App() {
       container.removeEventListener('click', handleClick)
       container.removeEventListener('dblclick', handleDoubleClick)
     }
-  }, [uniqueKPs])
+  }, [uniqueKPs, kpStatusMap])
 
-  // 开始深度讲解(流式)
+  // 上报点击,更新状态
+  const recordClick = async (kp) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/knowledge/click`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kp_text: kp.text, kp_type: kp.type })
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
+      }
+    } catch (err) {
+      console.error('上报点击失败:', err)
+    }
+  }
+
+  // 标记/取消"已掌握"
+  const toggleKnown = async (kp) => {
+    const currentStatus = getKpStatus(kp.text)
+    const url = currentStatus === 'known' 
+      ? `${API_BASE}/api/knowledge/unmark-known`
+      : `${API_BASE}/api/knowledge/mark-known`
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kp_text: kp.text, kp_type: kp.type })
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
+      }
+    } catch (err) {
+      console.error('切换状态失败:', err)
+    }
+  }
+
   const startDeepExplain = async (kp) => {
-    // 如果有正在进行的请求,先中止
     if (deepAbortRef.current) {
       deepAbortRef.current.abort()
     }
@@ -282,7 +374,6 @@ function App() {
     setDeepExplanation('')
     setDeepLoading(true)
 
-    // 找上下文
     const context = findContextForKP(docContentRef.current, kp.id) || kp.text
 
     const controller = new AbortController()
@@ -300,9 +391,7 @@ function App() {
         signal: controller.signal
       })
 
-      if (!response.ok) {
-        throw new Error(`请求失败: ${response.status}`)
-      }
+      if (!response.ok) throw new Error(`请求失败: ${response.status}`)
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
@@ -335,6 +424,7 @@ function App() {
       })
       mark.classList.add('active')
     }
+    recordClick(kp)
   }
 
   const handleKPCardDblClick = (kp) => {
@@ -343,19 +433,34 @@ function App() {
   }
 
   const closeDeep = () => {
-    if (deepAbortRef.current) {
-      deepAbortRef.current.abort()
-    }
+    if (deepAbortRef.current) deepAbortRef.current.abort()
     setShowDeep(false)
     setDeepExplanation('')
     setDeepLoading(false)
+  }
+
+  // 统计
+  const stats = { unknown: 0, learning: 0, known: 0 }
+  for (const kp of uniqueKPs) {
+    const s = getKpStatus(kp.text)
+    stats[s] = (stats[s] || 0) + 1
   }
 
   return (
     <div className="app">
       <header className="app-header">
         <h1>AI 学习助手</h1>
-        <div className="upload-area">
+        <div className="header-controls">
+          {docLoaded && (
+            <label className="toggle-label">
+              <input
+                type="checkbox"
+                checked={hideKnown}
+                onChange={(e) => setHideKnown(e.target.checked)}
+              />
+              <span>隐藏已掌握</span>
+            </label>
+          )}
           <label htmlFor="file-upload" className="upload-button">
             {fileName ? `📄 ${fileName}` : '📁 上传 docx 文档'}
           </label>
@@ -384,7 +489,6 @@ function App() {
         </section>
 
         <aside className="chat-area">
-          {/* 选中的知识点简介 */}
           {selectedKP && (
             <div className="selected-kp-panel">
               <div className="selected-kp-header">
@@ -396,25 +500,27 @@ function App() {
                   className="close-btn"
                   onClick={() => setSelectedKP(null)}
                   title="关闭"
-                >
-                  ×
-                </button>
+                >×</button>
               </div>
               <div className="selected-kp-content">
                 {selectedKP.explanation}
               </div>
-              {!showDeep && (
+              <div className="kp-actions">
+                {!showDeep && (
+                  <button className="deep-btn" onClick={() => startDeepExplain(selectedKP)}>
+                    📚 深入讲解
+                  </button>
+                )}
                 <button
-                  className="deep-btn"
-                  onClick={() => startDeepExplain(selectedKP)}
+                  className={`known-btn ${getKpStatus(selectedKP.text) === 'known' ? 'is-known' : ''}`}
+                  onClick={() => toggleKnown(selectedKP)}
                 >
-                  📚 深入讲解
+                  {getKpStatus(selectedKP.text) === 'known' ? '✓ 已掌握(点击取消)' : '标记已掌握'}
                 </button>
-              )}
+              </div>
             </div>
           )}
 
-          {/* 深度讲解面板 */}
           {showDeep && (
             <div className="deep-panel">
               <div className="deep-header">
@@ -422,13 +528,7 @@ function App() {
                   📚 详细讲解
                   {deepLoading && <span className="thinking-dot">●</span>}
                 </span>
-                <button
-                  className="close-btn"
-                  onClick={closeDeep}
-                  title="关闭"
-                >
-                  ×
-                </button>
+                <button className="close-btn" onClick={closeDeep} title="关闭">×</button>
               </div>
               <div className="deep-content">
                 {deepExplanation || (deepLoading && <span className="placeholder-inline">AI 正在思考...</span>)}
@@ -445,7 +545,9 @@ function App() {
               </span>
             )}
             {!extracting && uniqueKPs.length > 0 && (
-              <span className="progress">（共 {uniqueKPs.length} 个）</span>
+              <span className="progress">
+                （{stats.known} 掌握 / {stats.learning} 学习中 / {stats.unknown} 未学）
+              </span>
             )}
           </h2>
 
@@ -456,23 +558,28 @@ function App() {
             {docLoaded && uniqueKPs.length === 0 && !extracting && (
               <p className="placeholder">暂无提取到的知识点</p>
             )}
-            {uniqueKPs.map((kp) => (
-              <div
-                key={kp.id}
-                className={`kp-card kp-${kp.type} ${selectedKP?.id === kp.id ? 'selected' : ''}`}
-                onClick={() => handleKPCardClick(kp)}
-                onDoubleClick={() => handleKPCardDblClick(kp)}
-                title="单击定位 | 双击深入讲解"
-              >
-                <div className="kp-header">
-                  <span className="kp-type-badge">
-                    {kp.type === 'term' ? '术语' : '公式'}
-                  </span>
-                  <span className="kp-text">{kp.text}</span>
+            {uniqueKPs.map((kp) => {
+              const status = getKpStatus(kp.text)
+              return (
+                <div
+                  key={kp.id}
+                  className={`kp-card kp-${kp.type} kp-card-${status} ${selectedKP?.id === kp.id ? 'selected' : ''}`}
+                  onClick={() => handleKPCardClick(kp)}
+                  onDoubleClick={() => handleKPCardDblClick(kp)}
+                  title="单击定位 | 双击深入讲解"
+                >
+                  <div className="kp-header">
+                    <span className="kp-type-badge">
+                      {kp.type === 'term' ? '术语' : '公式'}
+                    </span>
+                    <span className="kp-text">{kp.text}</span>
+                    {status === 'known' && <span className="status-icon" title="已掌握">✓</span>}
+                    {status === 'learning' && <span className="status-icon learning" title="学习中">●</span>}
+                  </div>
+                  <div className="kp-explanation">{kp.explanation}</div>
                 </div>
-                <div className="kp-explanation">{kp.explanation}</div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </aside>
       </main>

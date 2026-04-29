@@ -595,3 +595,130 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+/* === 阶段 6 新增样式 === */
+
+/* 顶部控件 */
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #515154;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* 知识点状态:已掌握的高亮淡化 */
+.document-content mark.kp-status-known {
+  background: #e8f5e9;
+  color: #86868b;
+  text-decoration: line-through;
+  text-decoration-color: #c1c1c1;
+  text-decoration-thickness: 1px;
+}
+
+.document-content mark.kp-status-known:hover {
+  background: #d4ebd6;
+  color: #515154;
+}
+
+/* 学习中:稍微淡化但仍醒目 */
+.document-content mark.kp-status-learning {
+  background: #fff8d4;
+}
+
+.document-content mark.kp-status-learning.kp-highlight-formula {
+  background: #ffe6c4;
+}
+
+/* 隐藏已掌握模式:已掌握的不显示高亮样式 */
+.document-content.hide-known mark.kp-status-known {
+  background: transparent;
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+  padding: 0;
+}
+
+/* 知识点操作按钮组 */
+.kp-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.kp-actions .deep-btn {
+  margin-top: 0;
+}
+
+.known-btn {
+  padding: 0.4rem 0.8rem;
+  background: #fff;
+  color: #1d1d1f;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.known-btn:hover {
+  background: #f5f5f7;
+  border-color: #86868b;
+}
+
+.known-btn.is-known {
+  background: #34c759;
+  color: white;
+  border-color: #34c759;
+}
+
+.known-btn.is-known:hover {
+  background: #28a745;
+}
+
+/* 知识点卡片状态 */
+.kp-card-known {
+  opacity: 0.55;
+}
+
+.kp-card-known:hover {
+  opacity: 1;
+}
+
+.kp-card-learning {
+  border-left: 3px solid #ff9500;
+}
+
+/* 状态图标 */
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #34c759;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: bold;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.status-icon.learning {
+  background: #ff9500;
+  font-size: 0.5rem;
+}
