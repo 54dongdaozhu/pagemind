@@ -32,13 +32,24 @@
 ai-study-tool/
 ├── frontend/              # React 前端
 │   ├── src/
-│   │   ├── App.jsx       # 主组件(包含所有交互逻辑)
-│   │   ├── App.css       # 样式
-│   │   └── main.jsx      # 入口
+│   │   ├── app/          # 应用入口组件
+│   │   ├── api/          # 后端 API 调用封装
+│   │   ├── features/     # 文档、知识点等业务模块
+│   │   ├── styles/       # 全局/页面样式
+│   │   ├── types/        # 前端常量与类型约定
+│   │   ├── utils/        # 通用工具函数
+│   │   └── main.jsx      # React 挂载入口
 │   ├── package.json
 │   └── vite.config.js
 ├── backend/               # FastAPI 后端
-│   ├── main.py           # 接口定义 + LLM 调用 + SQLite 操作
+│   ├── main.py           # 兼容 uvicorn main:app 的启动入口
+│   ├── app/
+│   │   ├── main.py       # FastAPI 应用工厂与路由注册
+│   │   ├── core/         # 配置、数据库连接
+│   │   ├── models/       # 领域常量/模型
+│   │   ├── schemas/      # Pydantic 请求响应模型
+│   │   ├── services/     # LLM、提取、学习状态等业务逻辑
+│   │   └── routers/      # API 路由分组
 │   ├── venv/             # Python 虚拟环境(已 gitignore)
 │   ├── .env              # API Key(已 gitignore)
 │   └── user_data.db      # SQLite 数据库(已 gitignore)

@@ -1,99 +1,21 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import mammoth from 'mammoth'
-import './App.css'
-
-const API_BASE = 'http://localhost:8000'
-
-// ========== 工具函数 ==========
-
-function hashString(str) {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash |= 0
-  }
-  return Math.abs(hash).toString(36)
-}
-
-function splitIntoChunks(html) {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(html, 'text/html')
-  const blocks = []
-  const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, td')
-  elements.forEach(el => {
-    const text = el.textContent.trim()
-    if (text.length > 0) blocks.push(text)
-  })
-  const chunks = []
-  let buffer = ''
-  for (const block of blocks) {
-    if (buffer.length + block.length > 800 && buffer.length > 0) {
-      chunks.push(buffer)
-      buffer = block
-    } else {
-      buffer = buffer ? buffer + '\n' + block : block
-    }
-  }
-  if (buffer.length > 0) chunks.push(buffer)
-  return chunks
-}
-
-function highlightFirstMatch(container, keyword, kpId, kpType, status) {
-  if (!keyword || !container) return false
-  const walker = document.createTreeWalker(
-    container,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode(node) {
-        if (node.parentElement && node.parentElement.tagName === 'MARK') {
-          return NodeFilter.FILTER_REJECT
-        }
-        return NodeFilter.FILTER_ACCEPT
-      }
-    }
-  )
-  let textNode
-  while ((textNode = walker.nextNode())) {
-    const text = textNode.nodeValue
-    const idx = text.indexOf(keyword)
-    if (idx !== -1) {
-      const before = text.slice(0, idx)
-      const after = text.slice(idx + keyword.length)
-      const mark = document.createElement('mark')
-      mark.className = `kp-highlight kp-highlight-${kpType} kp-status-${status || 'unknown'}`
-      mark.dataset.kpId = kpId
-      mark.dataset.kpText = keyword
-      mark.textContent = keyword
-      const parent = textNode.parentNode
-      if (before) parent.insertBefore(document.createTextNode(before), textNode)
-      parent.insertBefore(mark, textNode)
-      if (after) parent.insertBefore(document.createTextNode(after), textNode)
-      parent.removeChild(textNode)
-      return true
-    }
-  }
-  return false
-}
-
-function findContextForKP(container, kpId) {
-  if (!container) return ''
-  const mark = container.querySelector(`mark[data-kp-id="${kpId}"]`)
-  if (!mark) return ''
-  let node = mark.parentElement
-  const blockTags = ['P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TD', 'DIV']
-  while (node && !blockTags.includes(node.tagName)) node = node.parentElement
-  return node ? node.textContent.trim() : mark.textContent
-}
-
-function updateMarkStatusInDom(container, kpText, status) {
-  if (!container) return
-  const marks = container.querySelectorAll(`mark[data-kp-text="${CSS.escape(kpText)}"]`)
-  marks.forEach(m => {
-    m.classList.remove('kp-status-unknown', 'kp-status-learning', 'kp-status-known')
-    m.classList.add(`kp-status-${status}`)
-  })
-}
+import {
+  extractKnowledge,
+  fetchKnowledgeStatuses,
+  markKnowledgeKnown,
+  recordKnowledgeClick,
+  requestDeepExplanation,
+  unmarkKnowledgeKnown,
+} from '../api/knowledge'
+import { splitIntoChunks } from '../features/document/documentUtils'
+import {
+  findContextForKP,
+  highlightFirstMatch,
+  updateMarkStatusInDom,
+} from '../features/knowledge/highlightDom'
+import { hashString } from '../utils/hash'
+import '../styles/App.css'
 
 // ========== React 组件 ==========
 
@@ -123,7 +45,10 @@ function App() {
   const highlightedIdsRef = useRef(new Set())
   const deepAbortRef = useRef(null)
 
-  const getKpStatus = (kpText) => kpStatusMap[kpText] || 'unknown'
+  const getKpStatus = useCallback(
+    (kpText) => kpStatusMap[kpText] || 'unknown',
+    [kpStatusMap],
+  )
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
@@ -172,21 +97,14 @@ function App() {
       const text = chunks[i]
       const chunkId = hashString(text)
       try {
-        const response = await fetch(`${API_BASE}/api/extract-knowledge`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, chunk_id: chunkId })
-        })
-        if (response.ok) {
-          const data = await response.json()
-          const kpsWithMeta = data.knowledge_points.map(kp => ({
-            ...kp,
-            chunkIndex: i,
-            id: hashString(kp.text + i)
-          }))
-          allKPs.push(...kpsWithMeta)
-          setKnowledgePoints([...allKPs])
-        }
+        const data = await extractKnowledge(text, chunkId)
+        const kpsWithMeta = data.knowledge_points.map(kp => ({
+          ...kp,
+          chunkIndex: i,
+          id: hashString(kp.text + i)
+        }))
+        allKPs.push(...kpsWithMeta)
+        setKnowledgePoints([...allKPs])
       } catch (err) {
         console.error(`块 ${i} 提取出错:`, err)
       }
@@ -196,25 +114,23 @@ function App() {
     extractingRef.current = false
   }
 
-  const uniqueKPs = []
-  const seenTexts = new Set()
-  for (const kp of knowledgePoints) {
-    if (!seenTexts.has(kp.text)) {
-      seenTexts.add(kp.text)
-      uniqueKPs.push(kp)
+  const uniqueKPs = useMemo(() => {
+    const items = []
+    const seenTexts = new Set()
+    for (const kp of knowledgePoints) {
+      if (!seenTexts.has(kp.text)) {
+        seenTexts.add(kp.text)
+        items.push(kp)
+      }
     }
-  }
+    return items
+  }, [knowledgePoints])
 
   // 拉取知识点状态
   useEffect(() => {
     if (uniqueKPs.length === 0) return
     const texts = uniqueKPs.map(kp => kp.text)
-    fetch(`${API_BASE}/api/knowledge/status-batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kp_texts: texts })
-    })
-      .then(r => r.ok ? r.json() : null)
+    fetchKnowledgeStatuses(texts)
       .then(data => {
         if (!data) return
         const map = {}
@@ -222,7 +138,7 @@ function App() {
         setKpStatusMap(prev => ({ ...prev, ...map }))
       })
       .catch(err => console.error('拉取状态失败:', err))
-  }, [uniqueKPs.length])
+  }, [uniqueKPs])
 
   // 增量高亮
   useEffect(() => {
@@ -233,7 +149,7 @@ function App() {
       highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type, status)
       highlightedIdsRef.current.add(kp.id)
     }
-  }, [uniqueKPs, docLoaded, kpStatusMap])
+  }, [uniqueKPs, docLoaded, kpStatusMap, getKpStatus])
 
   // 同步 mark 状态 class
   useEffect(() => {
@@ -338,15 +254,8 @@ function App() {
 
   const recordClick = async (kp) => {
     try {
-      const response = await fetch(`${API_BASE}/api/knowledge/click`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kp_text: kp.text, kp_type: kp.type })
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
-      }
+      const data = await recordKnowledgeClick(kp)
+      setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
     } catch (err) {
       console.error('上报点击失败:', err)
     }
@@ -354,19 +263,11 @@ function App() {
 
   const toggleKnown = async (kp) => {
     const currentStatus = getKpStatus(kp.text)
-    const url = currentStatus === 'known'
-      ? `${API_BASE}/api/knowledge/unmark-known`
-      : `${API_BASE}/api/knowledge/mark-known`
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kp_text: kp.text, kp_type: kp.type })
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
-      }
+      const data = currentStatus === 'known'
+        ? await unmarkKnowledgeKnown(kp)
+        : await markKnowledgeKnown(kp)
+      setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
     } catch (err) {
       console.error('切换状态失败:', err)
     }
@@ -381,12 +282,7 @@ function App() {
     const controller = new AbortController()
     deepAbortRef.current = controller
     try {
-      const response = await fetch(`${API_BASE}/api/explain-deep`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: kp.text, kp_type: kp.type, context }),
-        signal: controller.signal
-      })
+      const response = await requestDeepExplanation(kp, context, controller.signal)
       if (!response.ok) throw new Error(`请求失败: ${response.status}`)
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')

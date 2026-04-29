@@ -1,0 +1,5 @@
+LEARNING_THRESHOLD = 3
+
+STATUS_UNKNOWN = "unknown"
+STATUS_LEARNING = "learning"
+STATUS_KNOWN = "known"
