@@ -1,0 +1,25 @@
+# Environment variables
+.env
+*.env
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Database
+*.db
+*.sqlite

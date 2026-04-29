@@ -1,0 +1,396 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background: #fff;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid #e5e5e7;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.app-header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.document-area {
+  flex: 7;
+  background: #fff;
+  padding: 2rem 3rem;
+  overflow-y: auto;
+  border-right: 1px solid #e5e5e7;
+}
+
+.chat-area {
+  flex: 3;
+  background: #fafafa;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+.chat-area h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #1d1d1f;
+}
+
+.placeholder {
+  color: #86868b;
+  font-size: 0.95rem;
+  text-align: center;
+  margin-top: 2rem;
+}
+/* 头部布局调整 */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 上传按钮 */
+.upload-button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: #0071e3;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-button:hover {
+  background: #0077ed;
+}
+
+/* 错误提示 */
+.error {
+  color: #d70015;
+  text-align: center;
+  margin-top: 2rem;
+  padding: 1rem;
+  background: #ffeded;
+  border-radius: 8px;
+}
+
+/* 文档内容样式 */
+.document-content {
+  max-width: 800px;
+  margin: 0 auto;
+  line-height: 1.8;
+  font-size: 16px;
+  color: #1d1d1f;
+}
+
+.document-content h1,
+.document-content h2,
+.document-content h3,
+.document-content h4 {
+  margin: 1.5em 0 0.8em 0;
+  font-weight: 600;
+}
+
+.document-content h1 { font-size: 1.8em; }
+.document-content h2 { font-size: 1.5em; }
+.document-content h3 { font-size: 1.25em; }
+.document-content h4 { font-size: 1.1em; }
+
+.document-content p {
+  margin: 0.8em 0;
+}
+
+.document-content table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+
+.document-content table td,
+.document-content table th {
+  border: 1px solid #d2d2d7;
+  padding: 0.5em 0.8em;
+}
+
+.document-content img {
+  max-width: 100%;
+  height: auto;
+  margin: 1em 0;
+}
+
+.document-content ul,
+.document-content ol {
+  margin: 0.8em 0;
+  padding-left: 2em;
+}
+/* 对话区布局 */
+.chat-area {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-area h2 {
+  flex-shrink: 0;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding-right: 0.5rem;
+}
+
+.chat-message {
+  margin-bottom: 1rem;
+  padding: 0.8rem 1rem;
+  border-radius: 12px;
+  font-size: 0.9rem;
+}
+
+.chat-message.user {
+  background: #007aff;
+  color: white;
+  margin-left: 2rem;
+}
+
+.chat-message.assistant {
+  background: #fff;
+  border: 1px solid #e5e5e7;
+  margin-right: 2rem;
+}
+
+.chat-message.error {
+  background: #ffeded;
+  color: #d70015;
+  border: 1px solid #ffd0d0;
+}
+
+.chat-role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+  opacity: 0.8;
+}
+
+.chat-content {
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-content.thinking {
+  color: #86868b;
+  font-style: italic;
+}
+
+/* 输入区 */
+.chat-input-area {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.chat-input {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.chat-input:focus {
+  border-color: #0071e3;
+}
+
+.chat-input:disabled {
+  background: #f5f5f7;
+  cursor: not-allowed;
+}
+
+.chat-send-button {
+  padding: 0 1.2rem;
+  background: #0071e3;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+  align-self: stretch;
+}
+
+.chat-send-button:hover:not(:disabled) {
+  background: #0077ed;
+}
+
+.chat-send-button:disabled {
+  background: #c7c7cc;
+  cursor: not-allowed;
+}
+/* 提取进度 */
+.progress {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: #86868b;
+  margin-left: 0.5rem;
+}
+
+/* 知识点列表 */
+.kp-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 0.3rem;
+  min-height: 0;
+}
+
+/* 知识点卡片 */
+.kp-card {
+  background: #fff;
+  border: 1px solid #e5e5e7;
+  border-radius: 10px;
+  padding: 0.8rem;
+  margin-bottom: 0.6rem;
+  transition: all 0.2s;
+}
+
+.kp-card:hover {
+  border-color: #0071e3;
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.1);
+}
+
+.kp-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.kp-type-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.kp-term .kp-type-badge {
+  background: #e6f0ff;
+  color: #0071e3;
+}
+
+.kp-formula .kp-type-badge {
+  background: #fff4e6;
+  color: #ff8c00;
+}
+
+.kp-text {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #1d1d1f;
+  word-break: break-word;
+}
+
+.kp-explanation {
+  font-size: 0.82rem;
+  color: #515154;
+  line-height: 1.5;
+}
+
+
+/* === 阶段 3 新增样式 === */
+.progress {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: #86868b;
+  margin-left: 0.5rem;
+}
+
+.kp-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 0.3rem;
+  min-height: 0;
+}
+
+.kp-card {
+  background: #fff;
+  border: 1px solid #e5e5e7;
+  border-radius: 10px;
+  padding: 0.8rem;
+  margin-bottom: 0.6rem;
+  transition: all 0.2s;
+}
+
+.kp-card:hover {
+  border-color: #0071e3;
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.1);
+}
+
+.kp-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.kp-type-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.kp-term .kp-type-badge {
+  background: #e6f0ff;
+  color: #0071e3;
+}
+
+.kp-formula .kp-type-badge {
+  background: #fff4e6;
+  color: #ff8c00;
+}
+
+.kp-text {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #1d1d1f;
+  word-break: break-word;
+}
+
+.kp-explanation {
+  font-size: 0.82rem;
+  color: #515154;
+  line-height: 1.5;
+}
