@@ -394,3 +394,113 @@ body {
   color: #515154;
   line-height: 1.5;
 }
+/* === 阶段 4 新增样式 === */
+
+/* 文档中的高亮 */
+.kp-highlight {
+  background: #fff3a3;
+  padding: 1px 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.kp-highlight:hover {
+  background: #ffe066;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.kp-highlight-formula {
+  background: #ffd6a3;
+}
+
+.kp-highlight-formula:hover {
+  background: #ffb866;
+}
+
+.kp-highlight.active {
+  background: #0071e3;
+  color: white;
+  font-weight: 500;
+}
+
+/* 选中的知识点面板(顶部) */
+.selected-kp-panel {
+  background: #fff;
+  border: 1px solid #d2d2d7;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+
+.selected-kp-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.kp-type-badge-term {
+  background: #e6f0ff;
+  color: #0071e3;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.kp-type-badge-formula {
+  background: #fff4e6;
+  color: #ff8c00;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.selected-kp-title {
+  flex: 1;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1d1d1f;
+  word-break: break-word;
+  margin: 0;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: #86868b;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: #1d1d1f;
+}
+
+.selected-kp-content {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #1d1d1f;
+}
+
+/* 知识点卡片可点击 */
+.kp-card {
+  cursor: pointer;
+}
+
+.kp-card.selected {
+  border-color: #0071e3;
+  background: #f0f7ff;
+}

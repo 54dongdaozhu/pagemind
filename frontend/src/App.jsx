@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import mammoth from 'mammoth'
 import './App.css'
 
 const API_BASE = 'http://localhost:8000'
+
+// ========== 工具函数 ==========
 
 function hashString(str) {
   let hash = 0
@@ -41,15 +43,65 @@ function splitIntoChunks(html) {
   return chunks
 }
 
+function highlightFirstMatch(container, keyword, kpId, kpType) {
+  if (!keyword || !container) return false
+
+  const walker = document.createTreeWalker(
+    container,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        if (node.parentElement && node.parentElement.tagName === 'MARK') {
+          return NodeFilter.FILTER_REJECT
+        }
+        return NodeFilter.FILTER_ACCEPT
+      }
+    }
+  )
+
+  let textNode
+  while ((textNode = walker.nextNode())) {
+    const text = textNode.nodeValue
+    const idx = text.indexOf(keyword)
+    if (idx !== -1) {
+      const before = text.slice(0, idx)
+      const after = text.slice(idx + keyword.length)
+
+      const mark = document.createElement('mark')
+      mark.className = `kp-highlight kp-highlight-${kpType}`
+      mark.dataset.kpId = kpId
+      mark.textContent = keyword
+
+      const parent = textNode.parentNode
+      if (before) {
+        parent.insertBefore(document.createTextNode(before), textNode)
+      }
+      parent.insertBefore(mark, textNode)
+      if (after) {
+        parent.insertBefore(document.createTextNode(after), textNode)
+      }
+      parent.removeChild(textNode)
+      return true
+    }
+  }
+  return false
+}
+
+// ========== React 组件 ==========
+
 function App() {
-  const [docHtml, setDocHtml] = useState('')
   const [fileName, setFileName] = useState('')
+  const [docLoaded, setDocLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [knowledgePoints, setKnowledgePoints] = useState([])
   const [extractProgress, setExtractProgress] = useState({ done: 0, total: 0 })
   const [extracting, setExtracting] = useState(false)
+  const [selectedKP, setSelectedKP] = useState(null)
+
   const extractingRef = useRef(false)
+  const docContentRef = useRef(null)
+  const highlightedIdsRef = useRef(new Set())  // 已经高亮过的 kpId 集合
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
@@ -63,11 +115,25 @@ function App() {
     setFileName(file.name)
     setKnowledgePoints([])
     setExtractProgress({ done: 0, total: 0 })
+    setSelectedKP(null)
+    setDocLoaded(false)
+    highlightedIdsRef.current = new Set()
+
+    // 清空文档容器
+    if (docContentRef.current) {
+      docContentRef.current.innerHTML = ''
+    }
 
     try {
       const arrayBuffer = await file.arrayBuffer()
       const result = await mammoth.convertToHtml({ arrayBuffer })
-      setDocHtml(result.value)
+
+      // 直接把 HTML 写入容器(不通过 React state,避免重渲染冲掉高亮)
+      if (docContentRef.current) {
+        docContentRef.current.innerHTML = result.value
+      }
+      setDocLoaded(true)
+
       if (result.messages.length > 0) {
         console.log('解析警告:', result.messages)
       }
@@ -101,7 +167,8 @@ function App() {
           const data = await response.json()
           const kpsWithMeta = data.knowledge_points.map(kp => ({
             ...kp,
-            chunkIndex: i
+            chunkIndex: i,
+            id: hashString(kp.text + i)
           }))
           allKPs.push(...kpsWithMeta)
           setKnowledgePoints([...allKPs])
@@ -117,12 +184,65 @@ function App() {
     extractingRef.current = false
   }
 
+  // 去重
   const uniqueKPs = []
-  const seen = new Set()
+  const seenTexts = new Set()
   for (const kp of knowledgePoints) {
-    if (!seen.has(kp.text)) {
-      seen.add(kp.text)
+    if (!seenTexts.has(kp.text)) {
+      seenTexts.add(kp.text)
       uniqueKPs.push(kp)
+    }
+  }
+
+  // 增量高亮:只对没高亮过的知识点应用 mark
+  useEffect(() => {
+    if (!docContentRef.current || !docLoaded) return
+
+    for (const kp of uniqueKPs) {
+      if (highlightedIdsRef.current.has(kp.id)) continue
+      const success = highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type)
+      highlightedIdsRef.current.add(kp.id)
+      if (!success) {
+        console.log(`未能在文档中找到知识点: "${kp.text}"`)
+      }
+    }
+  }, [uniqueKPs, docLoaded])
+
+  // 文档点击委托
+  useEffect(() => {
+    const container = docContentRef.current
+    if (!container) return
+
+    const handleClick = (event) => {
+      const target = event.target
+      if (target.tagName === 'MARK' && target.dataset.kpId) {
+        const kpId = target.dataset.kpId
+        const kp = uniqueKPs.find(k => k.id === kpId)
+        if (kp) {
+          setSelectedKP(kp)
+          container.querySelectorAll('mark.active').forEach(el => {
+            el.classList.remove('active')
+          })
+          target.classList.add('active')
+        }
+      }
+    }
+
+    container.addEventListener('click', handleClick)
+    return () => container.removeEventListener('click', handleClick)
+  }, [uniqueKPs])
+
+  const handleKPCardClick = (kp) => {
+    setSelectedKP(kp)
+    if (!docContentRef.current) return
+
+    const mark = docContentRef.current.querySelector(`mark[data-kp-id="${kp.id}"]`)
+    if (mark) {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      docContentRef.current.querySelectorAll('mark.active').forEach(el => {
+        el.classList.remove('active')
+      })
+      mark.classList.add('active')
     }
   }
 
@@ -148,20 +268,41 @@ function App() {
         <section className="document-area">
           {loading && <p className="placeholder">正在解析文档...</p>}
           {error && <p className="error">{error}</p>}
-          {!loading && !docHtml && !error && (
+          {!loading && !docLoaded && !error && (
             <p className="placeholder">请上传一份 docx 文档开始学习</p>
           )}
-          {docHtml && (
-            <div
-              className="document-content"
-              dangerouslySetInnerHTML={{ __html: docHtml }}
-            />
-          )}
+          {/* 这个 div 始终渲染，docLoaded 时显示，HTML 内容由 ref 直接控制 */}
+          <div
+            ref={docContentRef}
+            className="document-content"
+            style={{ display: docLoaded ? 'block' : 'none' }}
+          />
         </section>
 
         <aside className="chat-area">
+          {selectedKP && (
+            <div className="selected-kp-panel">
+              <div className="selected-kp-header">
+                <span className={`kp-type-badge kp-type-badge-${selectedKP.type}`}>
+                  {selectedKP.type === 'term' ? '术语' : '公式'}
+                </span>
+                <h3 className="selected-kp-title">{selectedKP.text}</h3>
+                <button
+                  className="close-btn"
+                  onClick={() => setSelectedKP(null)}
+                  title="关闭"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="selected-kp-content">
+                {selectedKP.explanation}
+              </div>
+            </div>
+          )}
+
           <h2>
-            知识点
+            知识点列表
             {extracting && (
               <span className="progress">
                 （提取中 {extractProgress.done}/{extractProgress.total}）
@@ -173,14 +314,18 @@ function App() {
           </h2>
 
           <div className="kp-list">
-            {!docHtml && (
+            {!docLoaded && (
               <p className="placeholder">上传文档后将自动提取知识点</p>
             )}
-            {docHtml && uniqueKPs.length === 0 && !extracting && (
+            {docLoaded && uniqueKPs.length === 0 && !extracting && (
               <p className="placeholder">暂无提取到的知识点</p>
             )}
-            {uniqueKPs.map((kp, i) => (
-              <div key={i} className={`kp-card kp-${kp.type}`}>
+            {uniqueKPs.map((kp) => (
+              <div
+                key={kp.id}
+                className={`kp-card kp-${kp.type} ${selectedKP?.id === kp.id ? 'selected' : ''}`}
+                onClick={() => handleKPCardClick(kp)}
+              >
                 <div className="kp-header">
                   <span className="kp-type-badge">
                     {kp.type === 'term' ? '术语' : '公式'}
