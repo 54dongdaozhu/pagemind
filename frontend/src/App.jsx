@@ -87,6 +87,20 @@ function highlightFirstMatch(container, keyword, kpId, kpType) {
   return false
 }
 
+// 在文档中找到知识点所在的段落上下文
+function findContextForKP(container, kpId) {
+  if (!container) return ''
+  const mark = container.querySelector(`mark[data-kp-id="${kpId}"]`)
+  if (!mark) return ''
+  // 向上找最近的块级祖先(p, li, h1-h6, td)
+  let node = mark.parentElement
+  const blockTags = ['P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TD', 'DIV']
+  while (node && !blockTags.includes(node.tagName)) {
+    node = node.parentElement
+  }
+  return node ? node.textContent.trim() : mark.textContent
+}
+
 // ========== React 组件 ==========
 
 function App() {
@@ -98,10 +112,16 @@ function App() {
   const [extractProgress, setExtractProgress] = useState({ done: 0, total: 0 })
   const [extracting, setExtracting] = useState(false)
   const [selectedKP, setSelectedKP] = useState(null)
+  
+  // 深度讲解相关
+  const [deepExplanation, setDeepExplanation] = useState('')
+  const [deepLoading, setDeepLoading] = useState(false)
+  const [showDeep, setShowDeep] = useState(false)
 
   const extractingRef = useRef(false)
   const docContentRef = useRef(null)
-  const highlightedIdsRef = useRef(new Set())  // 已经高亮过的 kpId 集合
+  const highlightedIdsRef = useRef(new Set())
+  const deepAbortRef = useRef(null)  // 用于中止请求
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0]
@@ -117,9 +137,10 @@ function App() {
     setExtractProgress({ done: 0, total: 0 })
     setSelectedKP(null)
     setDocLoaded(false)
+    setDeepExplanation('')
+    setShowDeep(false)
     highlightedIdsRef.current = new Set()
 
-    // 清空文档容器
     if (docContentRef.current) {
       docContentRef.current.innerHTML = ''
     }
@@ -128,7 +149,6 @@ function App() {
       const arrayBuffer = await file.arrayBuffer()
       const result = await mammoth.convertToHtml({ arrayBuffer })
 
-      // 直接把 HTML 写入容器(不通过 React state,避免重渲染冲掉高亮)
       if (docContentRef.current) {
         docContentRef.current.innerHTML = result.value
       }
@@ -184,7 +204,6 @@ function App() {
     extractingRef.current = false
   }
 
-  // 去重
   const uniqueKPs = []
   const seenTexts = new Set()
   for (const kp of knowledgePoints) {
@@ -194,7 +213,7 @@ function App() {
     }
   }
 
-  // 增量高亮:只对没高亮过的知识点应用 mark
+  // 增量高亮
   useEffect(() => {
     if (!docContentRef.current || !docLoaded) return
 
@@ -208,29 +227,101 @@ function App() {
     }
   }, [uniqueKPs, docLoaded])
 
-  // 文档点击委托
+  // 文档点击/双击委托
   useEffect(() => {
     const container = docContentRef.current
     if (!container) return
 
+    const selectMark = (mark) => {
+      const kpId = mark.dataset.kpId
+      const kp = uniqueKPs.find(k => k.id === kpId)
+      if (kp) {
+        setSelectedKP(kp)
+        container.querySelectorAll('mark.active').forEach(el => {
+          el.classList.remove('active')
+        })
+        mark.classList.add('active')
+      }
+      return kp
+    }
+
     const handleClick = (event) => {
       const target = event.target
       if (target.tagName === 'MARK' && target.dataset.kpId) {
-        const kpId = target.dataset.kpId
-        const kp = uniqueKPs.find(k => k.id === kpId)
+        selectMark(target)
+        // 单击不再额外做事(双击会单独处理)
+      }
+    }
+
+    const handleDoubleClick = (event) => {
+      const target = event.target
+      if (target.tagName === 'MARK' && target.dataset.kpId) {
+        const kp = selectMark(target)
         if (kp) {
-          setSelectedKP(kp)
-          container.querySelectorAll('mark.active').forEach(el => {
-            el.classList.remove('active')
-          })
-          target.classList.add('active')
+          startDeepExplain(kp)
         }
       }
     }
 
     container.addEventListener('click', handleClick)
-    return () => container.removeEventListener('click', handleClick)
+    container.addEventListener('dblclick', handleDoubleClick)
+    return () => {
+      container.removeEventListener('click', handleClick)
+      container.removeEventListener('dblclick', handleDoubleClick)
+    }
   }, [uniqueKPs])
+
+  // 开始深度讲解(流式)
+  const startDeepExplain = async (kp) => {
+    // 如果有正在进行的请求,先中止
+    if (deepAbortRef.current) {
+      deepAbortRef.current.abort()
+    }
+
+    setShowDeep(true)
+    setDeepExplanation('')
+    setDeepLoading(true)
+
+    // 找上下文
+    const context = findContextForKP(docContentRef.current, kp.id) || kp.text
+
+    const controller = new AbortController()
+    deepAbortRef.current = controller
+
+    try {
+      const response = await fetch(`${API_BASE}/api/explain-deep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: kp.text,
+          kp_type: kp.type,
+          context: context
+        }),
+        signal: controller.signal
+      })
+
+      if (!response.ok) {
+        throw new Error(`请求失败: ${response.status}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        setDeepExplanation(prev => prev + chunk)
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setDeepExplanation(prev => prev + `\n\n[错误] ${err.message}`)
+      }
+    } finally {
+      setDeepLoading(false)
+      deepAbortRef.current = null
+    }
+  }
 
   const handleKPCardClick = (kp) => {
     setSelectedKP(kp)
@@ -244,6 +335,20 @@ function App() {
       })
       mark.classList.add('active')
     }
+  }
+
+  const handleKPCardDblClick = (kp) => {
+    setSelectedKP(kp)
+    startDeepExplain(kp)
+  }
+
+  const closeDeep = () => {
+    if (deepAbortRef.current) {
+      deepAbortRef.current.abort()
+    }
+    setShowDeep(false)
+    setDeepExplanation('')
+    setDeepLoading(false)
   }
 
   return (
@@ -269,9 +374,8 @@ function App() {
           {loading && <p className="placeholder">正在解析文档...</p>}
           {error && <p className="error">{error}</p>}
           {!loading && !docLoaded && !error && (
-            <p className="placeholder">请上传一份 docx 文档开始学习</p>
+            <p className="placeholder">请上传一份 docx 文档开始学习。提示：单击高亮看简介，双击看详细讲解。</p>
           )}
-          {/* 这个 div 始终渲染，docLoaded 时显示，HTML 内容由 ref 直接控制 */}
           <div
             ref={docContentRef}
             className="document-content"
@@ -280,6 +384,7 @@ function App() {
         </section>
 
         <aside className="chat-area">
+          {/* 选中的知识点简介 */}
           {selectedKP && (
             <div className="selected-kp-panel">
               <div className="selected-kp-header">
@@ -297,6 +402,37 @@ function App() {
               </div>
               <div className="selected-kp-content">
                 {selectedKP.explanation}
+              </div>
+              {!showDeep && (
+                <button
+                  className="deep-btn"
+                  onClick={() => startDeepExplain(selectedKP)}
+                >
+                  📚 深入讲解
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 深度讲解面板 */}
+          {showDeep && (
+            <div className="deep-panel">
+              <div className="deep-header">
+                <span className="deep-title">
+                  📚 详细讲解
+                  {deepLoading && <span className="thinking-dot">●</span>}
+                </span>
+                <button
+                  className="close-btn"
+                  onClick={closeDeep}
+                  title="关闭"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="deep-content">
+                {deepExplanation || (deepLoading && <span className="placeholder-inline">AI 正在思考...</span>)}
+                {deepLoading && deepExplanation && <span className="cursor-blink">▋</span>}
               </div>
             </div>
           )}
@@ -325,6 +461,8 @@ function App() {
                 key={kp.id}
                 className={`kp-card kp-${kp.type} ${selectedKP?.id === kp.id ? 'selected' : ''}`}
                 onClick={() => handleKPCardClick(kp)}
+                onDoubleClick={() => handleKPCardDblClick(kp)}
+                title="单击定位 | 双击深入讲解"
               >
                 <div className="kp-header">
                   <span className="kp-type-badge">

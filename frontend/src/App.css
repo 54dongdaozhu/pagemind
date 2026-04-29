@@ -504,3 +504,94 @@ body {
   border-color: #0071e3;
   background: #f0f7ff;
 }
+/* === 阶段 5 新增样式 === */
+
+/* "深入讲解"按钮 */
+.deep-btn {
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.8rem;
+  background: linear-gradient(135deg, #0071e3, #5e5ce6);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: opacity 0.2s;
+}
+
+.deep-btn:hover {
+  opacity: 0.9;
+}
+
+/* 深度讲解面板 */
+.deep-panel {
+  background: #fff;
+  border: 1px solid #d2d2d7;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 2px 12px rgba(94, 92, 230, 0.08);
+  flex-shrink: 0;
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.deep-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.deep-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #1d1d1f;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.deep-content {
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: #1d1d1f;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.placeholder-inline {
+  color: #86868b;
+  font-style: italic;
+}
+
+/* 思考中的小圆点动画 */
+.thinking-dot {
+  color: #5e5ce6;
+  animation: pulse 1.4s ease-in-out infinite;
+  font-size: 0.7rem;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* 流式输出的光标 */
+.cursor-blink {
+  display: inline-block;
+  color: #0071e3;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
