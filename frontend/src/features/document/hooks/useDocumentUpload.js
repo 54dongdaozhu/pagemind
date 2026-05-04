@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import mammoth from 'mammoth'
+import { parseDocumentFile, SUPPORTED_DOCUMENT_LABEL } from '../documentParser'
 
 
 export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded }) {
@@ -11,10 +11,6 @@ export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded })
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files[0]
     if (!file) return
-    if (!file.name.endsWith('.docx')) {
-      setError('请上传 .docx 格式的文件')
-      return
-    }
 
     setError('')
     setLoading(true)
@@ -25,13 +21,12 @@ export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded })
     if (docContentRef.current) docContentRef.current.innerHTML = ''
 
     try {
-      const arrayBuffer = await file.arrayBuffer()
-      const result = await mammoth.convertToHtml({ arrayBuffer })
-      if (docContentRef.current) docContentRef.current.innerHTML = result.value
+      const html = await parseDocumentFile(file)
+      if (docContentRef.current) docContentRef.current.innerHTML = html
       setDocLoaded(true)
-      await onHtmlLoaded(result.value, file)
+      await onHtmlLoaded(html, file)
     } catch (err) {
-      setError('文档解析失败：' + err.message)
+      setError('文档解析失败：' + (err.message || `请上传 ${SUPPORTED_DOCUMENT_LABEL} 格式的文件`))
     } finally {
       setLoading(false)
     }

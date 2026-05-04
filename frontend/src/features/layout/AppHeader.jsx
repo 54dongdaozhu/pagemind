@@ -1,3 +1,5 @@
+import { ACCEPTED_DOCUMENT_TYPES } from '../document/documentParser'
+
 function AppHeader({
   fileName,
   extracting,
@@ -37,7 +39,7 @@ function AppHeader({
         <input
           id="file-upload"
           type="file"
-          accept=".docx"
+          accept={ACCEPTED_DOCUMENT_TYPES}
           onChange={onFileUpload}
           style={{ display: 'none' }}
         />

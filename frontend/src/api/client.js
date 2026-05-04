@@ -1,4 +1,6 @@
-export const API_BASE = 'http://localhost:8000'
+const API_HOST = window.location.hostname || 'localhost'
+
+export const API_BASE = `http://${API_HOST}:8000`
 
 
 export async function postJson(path, body, options = {}) {

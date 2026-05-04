@@ -14,7 +14,10 @@ EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1"
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 DB_PATH = BACKEND_DIR / "user_data.db"
 CHROMA_PATH = BACKEND_DIR / "chroma_store"
-ALLOWED_ORIGINS = ["http://localhost:5173"]
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
 
 def validate_settings():
