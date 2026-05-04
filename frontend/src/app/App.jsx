@@ -1,37 +1,23 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import mammoth from 'mammoth'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import DocumentViewer from '../features/document/components/DocumentViewer'
+import { useDocumentUpload } from '../features/document/hooks/useDocumentUpload'
+import { useDeepExplanation } from '../features/explanation/useDeepExplanation'
+import AppHeader from '../features/layout/AppHeader'
 import {
-  extractKnowledge,
-  fetchKnowledgeStatuses,
-  markKnowledgeKnown,
-  recordKnowledgeClick,
-  requestDeepExplanation,
-  unmarkKnowledgeKnown,
-} from '../api/knowledge'
-import { splitIntoChunks } from '../features/document/documentUtils'
-import {
-  findContextForKP,
   highlightFirstMatch,
   updateMarkStatusInDom,
 } from '../features/knowledge/highlightDom'
-import { hashString } from '../utils/hash'
+import KnowledgePanel from '../features/knowledge/components/KnowledgePanel'
+import { useKnowledgeExtraction } from '../features/knowledge/hooks/useKnowledgeExtraction'
+import { useKnowledgeStatus } from '../features/knowledge/hooks/useKnowledgeStatus'
+import SidebarHeader from '../features/toc/components/SidebarHeader'
+import TocSidebar from '../features/toc/components/TocSidebar'
 import '../styles/App.css'
 
 // ========== React 组件 ==========
 
 function App() {
-  const [fileName, setFileName] = useState('')
-  const [docLoaded, setDocLoaded] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [knowledgePoints, setKnowledgePoints] = useState([])
-  const [extractProgress, setExtractProgress] = useState({ done: 0, total: 0 })
-  const [extracting, setExtracting] = useState(false)
   const [selectedKP, setSelectedKP] = useState(null)
-  const [deepExplanation, setDeepExplanation] = useState('')
-  const [deepLoading, setDeepLoading] = useState(false)
-  const [showDeep, setShowDeep] = useState(false)
-  const [kpStatusMap, setKpStatusMap] = useState({})
   const [hideKnown, setHideKnown] = useState(true)
 
   // 目录相关
@@ -39,106 +25,55 @@ function App() {
   const [tocOpen, setTocOpen] = useState(true)
   const [activeTocId, setActiveTocId] = useState(null)
 
-  const extractingRef = useRef(false)
   const docContentRef = useRef(null)
   const documentAreaRef = useRef(null)
   const highlightedIdsRef = useRef(new Set())
-  const deepAbortRef = useRef(null)
 
-  const getKpStatus = useCallback(
-    (kpText) => kpStatusMap[kpText] || 'unknown',
-    [kpStatusMap],
-  )
+  const {
+    extracting,
+    extractProgress,
+    uniqueKPs,
+    extractAllChunks,
+    resetExtraction,
+  } = useKnowledgeExtraction()
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0]
-    if (!file) return
-    if (!file.name.endsWith('.docx')) {
-      setError('请上传 .docx 格式的文件')
-      return
-    }
-    setError('')
-    setLoading(true)
-    setFileName(file.name)
-    setKnowledgePoints([])
-    setExtractProgress({ done: 0, total: 0 })
+  const {
+    deepExplanation,
+    deepLoading,
+    showDeep,
+    closeDeep,
+    resetDeep,
+    startDeepExplain,
+  } = useDeepExplanation(docContentRef)
+
+  const resetDocumentState = useCallback(() => {
+    resetExtraction()
     setSelectedKP(null)
-    setDocLoaded(false)
-    setDeepExplanation('')
-    setShowDeep(false)
+    resetDeep()
     setTocItems([])
     setActiveTocId(null)
     highlightedIdsRef.current = new Set()
+  }, [resetDeep, resetExtraction])
 
-    if (docContentRef.current) docContentRef.current.innerHTML = ''
+  const {
+    fileName,
+    docLoaded,
+    loading,
+    error,
+    handleFileUpload,
+  } = useDocumentUpload({
+    docContentRef,
+    onBeforeLoad: resetDocumentState,
+    onHtmlLoaded: extractAllChunks,
+  })
 
-    try {
-      const arrayBuffer = await file.arrayBuffer()
-      const result = await mammoth.convertToHtml({ arrayBuffer })
-      if (docContentRef.current) docContentRef.current.innerHTML = result.value
-      setDocLoaded(true)
-      await extractAllChunks(result.value)
-    } catch (err) {
-      setError('文档解析失败：' + err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const extractAllChunks = async (html) => {
-    if (extractingRef.current) return
-    extractingRef.current = true
-    setExtracting(true)
-    const chunks = splitIntoChunks(html)
-    setExtractProgress({ done: 0, total: chunks.length })
-    const allKPs = []
-
-    for (let i = 0; i < chunks.length; i++) {
-      const text = chunks[i]
-      const chunkId = hashString(text)
-      try {
-        const data = await extractKnowledge(text, chunkId)
-        const kpsWithMeta = data.knowledge_points.map(kp => ({
-          ...kp,
-          chunkIndex: i,
-          id: hashString(kp.text + i)
-        }))
-        allKPs.push(...kpsWithMeta)
-        setKnowledgePoints([...allKPs])
-      } catch (err) {
-        console.error(`块 ${i} 提取出错:`, err)
-      }
-      setExtractProgress({ done: i + 1, total: chunks.length })
-    }
-    setExtracting(false)
-    extractingRef.current = false
-  }
-
-  const uniqueKPs = useMemo(() => {
-    const items = []
-    const seenTexts = new Set()
-    for (const kp of knowledgePoints) {
-      if (!seenTexts.has(kp.text)) {
-        seenTexts.add(kp.text)
-        items.push(kp)
-      }
-    }
-    return items
-  }, [knowledgePoints])
-
-  // 拉取知识点状态
-  useEffect(() => {
-    if (uniqueKPs.length === 0) return
-    const texts = uniqueKPs.map(kp => kp.text)
-    fetchKnowledgeStatuses(texts)
-      .then(data => {
-        if (!data) return
-        const map = {}
-        for (const item of data.items) map[item.kp_text] = item.status
-        setKpStatusMap(prev => ({ ...prev, ...map }))
-      })
-      .catch(err => console.error('拉取状态失败:', err))
-  }, [uniqueKPs])
+  const {
+    kpStatusMap,
+    getKpStatus,
+    recordClick,
+    toggleKnown,
+    stats,
+  } = useKnowledgeStatus(uniqueKPs)
 
   // 增量高亮
   useEffect(() => {
@@ -204,7 +139,7 @@ function App() {
       container.removeEventListener('click', handleClick)
       container.removeEventListener('dblclick', handleDoubleClick)
     }
-  }, [uniqueKPs, kpStatusMap])
+  }, [uniqueKPs, kpStatusMap, recordClick, startDeepExplain])
 
   // 提取目录（文档加载后）
   useEffect(() => {
@@ -252,55 +187,6 @@ function App() {
     }
   }
 
-  const recordClick = async (kp) => {
-    try {
-      const data = await recordKnowledgeClick(kp)
-      setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
-    } catch (err) {
-      console.error('上报点击失败:', err)
-    }
-  }
-
-  const toggleKnown = async (kp) => {
-    const currentStatus = getKpStatus(kp.text)
-    try {
-      const data = currentStatus === 'known'
-        ? await unmarkKnowledgeKnown(kp)
-        : await markKnowledgeKnown(kp)
-      setKpStatusMap(prev => ({ ...prev, [kp.text]: data.status }))
-    } catch (err) {
-      console.error('切换状态失败:', err)
-    }
-  }
-
-  const startDeepExplain = async (kp) => {
-    if (deepAbortRef.current) deepAbortRef.current.abort()
-    setShowDeep(true)
-    setDeepExplanation('')
-    setDeepLoading(true)
-    const context = findContextForKP(docContentRef.current, kp.id) || kp.text
-    const controller = new AbortController()
-    deepAbortRef.current = controller
-    try {
-      const response = await requestDeepExplanation(kp, context, controller.signal)
-      if (!response.ok) throw new Error(`请求失败: ${response.status}`)
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        setDeepExplanation(prev => prev + decoder.decode(value, { stream: true }))
-      }
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        setDeepExplanation(prev => prev + `\n\n[错误] ${err.message}`)
-      }
-    } finally {
-      setDeepLoading(false)
-      deepAbortRef.current = null
-    }
-  }
-
   const handleKPCardClick = (kp) => {
     setSelectedKP(kp)
     if (!docContentRef.current) return
@@ -318,203 +204,56 @@ function App() {
     startDeepExplain(kp)
   }
 
-  const closeDeep = () => {
-    if (deepAbortRef.current) deepAbortRef.current.abort()
-    setShowDeep(false)
-    setDeepExplanation('')
-    setDeepLoading(false)
-  }
-
-  const stats = { unknown: 0, learning: 0, known: 0 }
-  for (const kp of uniqueKPs) {
-    const s = getKpStatus(kp.text)
-    stats[s] = (stats[s] || 0) + 1
-  }
-
   return (
     <div className={`app${tocOpen ? '' : ' toc-collapsed'}`}>
+      <SidebarHeader
+        tocOpen={tocOpen}
+        onToggle={() => setTocOpen(!tocOpen)}
+      />
 
-      {/* 左侧栏顶部（Logo 区域） */}
-      <div className="sidebar-header">
-        {tocOpen && <span className="app-logo">AI 学习助手</span>}
-        <button
-          className="toc-toggle-btn"
-          onClick={() => setTocOpen(!tocOpen)}
-          title={tocOpen ? '收起目录' : '展开目录'}
-        >
-          {tocOpen ? '◀' : '▶'}
-        </button>
-      </div>
+      <AppHeader
+        fileName={fileName}
+        extracting={extracting}
+        extractProgress={extractProgress}
+        docLoaded={docLoaded}
+        hideKnown={hideKnown}
+        onHideKnownChange={setHideKnown}
+        onFileUpload={handleFileUpload}
+      />
 
-      {/* 主区域顶部 Header */}
-      <header className="main-header">
-        <div className="header-file">
-          {fileName
-            ? <span className="file-name">📄 {fileName}</span>
-            : <span className="header-hint">上传文档后开始学习</span>
-          }
-          {extracting && (
-            <span className="extract-badge">
-              提取中 {extractProgress.done}/{extractProgress.total}
-            </span>
-          )}
-        </div>
-        <div className="header-controls">
-          {docLoaded && (
-            <label className="toggle-label">
-              <input
-                type="checkbox"
-                checked={hideKnown}
-                onChange={e => setHideKnown(e.target.checked)}
-              />
-              <span>隐藏已掌握</span>
-            </label>
-          )}
-          <label htmlFor="file-upload" className="upload-button">
-            上传文档
-          </label>
-          <input
-            id="file-upload"
-            type="file"
-            accept=".docx"
-            onChange={handleFileUpload}
-            style={{ display: 'none' }}
-          />
-        </div>
-      </header>
+      <TocSidebar
+        tocOpen={tocOpen}
+        tocItems={tocItems}
+        activeTocId={activeTocId}
+        docLoaded={docLoaded}
+        onSelectHeading={scrollToHeading}
+      />
 
-      {/* 目录侧边栏 */}
-      <aside className="toc-sidebar">
-        {tocOpen && (
-          <>
-            <div className="toc-section-title">文档目录</div>
-            <nav className="toc-nav">
-              {tocItems.length === 0 ? (
-                <div className="toc-empty">
-                  {docLoaded ? '此文档无标题结构' : '上传文档后\n自动生成目录'}
-                </div>
-              ) : (
-                tocItems.map(item => (
-                  <div
-                    key={item.id}
-                    className={`toc-item toc-level-${item.level}${activeTocId === item.id ? ' toc-active' : ''}`}
-                    onClick={() => scrollToHeading(item.id)}
-                    title={item.text}
-                  >
-                    {item.text}
-                  </div>
-                ))
-              )}
-            </nav>
-          </>
-        )}
-      </aside>
+      <DocumentViewer
+        documentAreaRef={documentAreaRef}
+        docContentRef={docContentRef}
+        loading={loading}
+        error={error}
+        docLoaded={docLoaded}
+      />
 
-      {/* 文档主区域 */}
-      <section className="document-area" ref={documentAreaRef}>
-        {loading && <p className="doc-placeholder">正在解析文档...</p>}
-        {error && <p className="doc-error">{error}</p>}
-        {!loading && !docLoaded && !error && (
-          <div className="welcome">
-            <div className="welcome-icon">📖</div>
-            <p className="welcome-text">上传一份 docx 文档开始学习</p>
-            <p className="welcome-hint">单击高亮词语查看简介，双击深入讲解</p>
-          </div>
-        )}
-        <div
-          ref={docContentRef}
-          className="document-content"
-          style={{ display: docLoaded ? 'block' : 'none' }}
-        />
-      </section>
-
-      {/* 知识点面板 */}
-      <aside className="kp-panel">
-
-        {/* 选中的知识点详情 */}
-        {selectedKP && (
-          <div className="selected-kp-panel">
-            <div className="selected-kp-header">
-              <span className={`kp-type-badge kp-type-badge-${selectedKP.type}`}>
-                {selectedKP.type === 'term' ? '术语' : '公式'}
-              </span>
-              <h3 className="selected-kp-title">{selectedKP.text}</h3>
-              <button className="close-btn" onClick={() => setSelectedKP(null)} title="关闭">×</button>
-            </div>
-            <div className="selected-kp-content">{selectedKP.explanation}</div>
-            <div className="kp-actions">
-              {!showDeep && (
-                <button className="deep-btn" onClick={() => startDeepExplain(selectedKP)}>
-                  深入讲解
-                </button>
-              )}
-              <button
-                className={`known-btn${getKpStatus(selectedKP.text) === 'known' ? ' is-known' : ''}`}
-                onClick={() => toggleKnown(selectedKP)}
-              >
-                {getKpStatus(selectedKP.text) === 'known' ? '✓ 已掌握' : '标记已掌握'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 深度讲解面板 */}
-        {showDeep && (
-          <div className="deep-panel">
-            <div className="deep-header">
-              <span className="deep-title">
-                详细讲解
-                {deepLoading && <span className="thinking-dot">●</span>}
-              </span>
-              <button className="close-btn" onClick={closeDeep} title="关闭">×</button>
-            </div>
-            <div className="deep-content">
-              {deepExplanation || (deepLoading && <span className="placeholder-inline">AI 正在思考...</span>)}
-              {deepLoading && deepExplanation && <span className="cursor-blink">▋</span>}
-            </div>
-          </div>
-        )}
-
-        {/* 知识点列表标题 */}
-        <div className="kp-panel-header">
-          <span className="kp-panel-title">知识点</span>
-          {!extracting && uniqueKPs.length > 0 && (
-            <span className="kp-stats">
-              {stats.known} 掌握 · {stats.learning} 学习中 · {stats.unknown} 未学
-            </span>
-          )}
-        </div>
-
-        {/* 知识点列表 */}
-        <div className="kp-list">
-          {!docLoaded && <p className="placeholder">上传文档后将自动提取知识点</p>}
-          {docLoaded && uniqueKPs.length === 0 && !extracting && (
-            <p className="placeholder">暂无提取到的知识点</p>
-          )}
-          {uniqueKPs.map((kp) => {
-            const status = getKpStatus(kp.text)
-            return (
-              <div
-                key={kp.id}
-                className={`kp-card kp-${kp.type} kp-card-${status}${selectedKP?.id === kp.id ? ' selected' : ''}`}
-                onClick={() => handleKPCardClick(kp)}
-                onDoubleClick={() => handleKPCardDblClick(kp)}
-                title="单击定位 | 双击深入讲解"
-              >
-                <div className="kp-header">
-                  <span className="kp-type-badge">
-                    {kp.type === 'term' ? '术语' : '公式'}
-                  </span>
-                  <span className="kp-text">{kp.text}</span>
-                  {status === 'known' && <span className="status-icon" title="已掌握">✓</span>}
-                  {status === 'learning' && <span className="status-icon learning" title="学习中">●</span>}
-                </div>
-                <div className="kp-explanation">{kp.explanation}</div>
-              </div>
-            )
-          })}
-        </div>
-      </aside>
+      <KnowledgePanel
+        selectedKP={selectedKP}
+        showDeep={showDeep}
+        deepLoading={deepLoading}
+        deepExplanation={deepExplanation}
+        extracting={extracting}
+        docLoaded={docLoaded}
+        knowledgePoints={uniqueKPs}
+        stats={stats}
+        getKpStatus={getKpStatus}
+        onCloseSelected={() => setSelectedKP(null)}
+        onStartDeepExplain={startDeepExplain}
+        onToggleKnown={toggleKnown}
+        onCloseDeep={closeDeep}
+        onCardClick={handleKPCardClick}
+        onCardDoubleClick={handleKPCardDblClick}
+      />
     </div>
   )
 }

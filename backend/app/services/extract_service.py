@@ -1,7 +1,9 @@
 import json
+from datetime import datetime
 
 from fastapi import HTTPException
 
+from app.core.database import get_db
 from app.schemas.knowledge import ExtractResponse, KnowledgePoint
 from app.services.llm_service import call_deepseek
 
@@ -33,15 +35,46 @@ EXTRACT_SYSTEM_PROMPT = """你是一个专业的备考辅导助手。你的任�
 _extract_cache = {}
 
 
+def _load_from_sqlite(chunk_id: str) -> list | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT result_json FROM extract_cache WHERE chunk_id = ?",
+            (chunk_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    data = json.loads(row["result_json"])
+    return [KnowledgePoint(**kp) for kp in data]
+
+
+def _save_to_sqlite(chunk_id: str, knowledge_points: list):
+    now = datetime.utcnow().isoformat()
+    result_json = json.dumps([kp.model_dump() for kp in knowledge_points], ensure_ascii=False)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO extract_cache (chunk_id, result_json, created_at) VALUES (?, ?, ?)",
+            (chunk_id, result_json, now),
+        )
+        conn.commit()
+
+
 def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
     text = text.strip()
 
+    # 1. 查内存缓存
     if chunk_id in _extract_cache:
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[chunk_id])
+
+    # 2. 查 SQLite 持久化缓存
+    cached = _load_from_sqlite(chunk_id)
+    if cached is not None:
+        _extract_cache[chunk_id] = cached
+        return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached)
 
     if len(text) < 30:
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=[])
 
+    # 3. 未命中 → 调 LLM
     messages = [
         {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
         {"role": "user", "content": f"请从以下文本中提取知识点:\n\n{text}"},
@@ -64,7 +97,9 @@ def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
                 continue
             knowledge_points.append(KnowledgePoint(**kp))
 
+        # 写入两级缓存
         _extract_cache[chunk_id] = knowledge_points
+        _save_to_sqlite(chunk_id, knowledge_points)
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"LLM 返回的 JSON 格式错误: {str(e)}")
