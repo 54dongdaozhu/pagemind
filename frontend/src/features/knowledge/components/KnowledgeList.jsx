@@ -37,7 +37,7 @@ function KnowledgeList({
               {isHigh && <span className="kp-importance-badge">★ 重点</span>}
               <span className="kp-text">{kp.text}</span>
               {status === 'known' && <span className="status-icon" title="已掌握">✓</span>}
-              {status === 'learning' && <span className="status-icon learning" title="学习中">●</span>}
+              {status === 'learning' && <span className="status-icon learning" title="理解中">●</span>}
             </div>
             <div className="kp-explanation">{kp.explanation}</div>
           </div>

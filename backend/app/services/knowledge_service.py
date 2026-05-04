@@ -125,4 +125,4 @@ def reset_all():
     with get_db() as conn:
         conn.execute("DELETE FROM user_knowledge")
         conn.commit()
-    return {"message": "已重置所有学习记录"}
+    return {"message": "已重置所有掌握记录"}

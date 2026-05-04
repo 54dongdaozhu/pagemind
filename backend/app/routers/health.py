@@ -9,7 +9,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/")
 def root():
-    return {"status": "ok", "message": "AI 学习助手后端运行中"}
+    return {"status": "ok", "message": "AI 文档学习助手后端运行中"}
 
 
 @router.post("/api/test-llm", response_model=ChatResponse)

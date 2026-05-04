@@ -1,7 +1,7 @@
 function SidebarHeader({ tocOpen, onToggle }) {
   return (
     <div className="sidebar-header">
-      {tocOpen && <span className="app-logo">AI 学习助手</span>}
+      {tocOpen && <span className="app-logo">AI 文档学习助手</span>}
       <button
         className="toc-toggle-btn"
         onClick={onToggle}

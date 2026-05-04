@@ -465,7 +465,7 @@ body {
   color: #555;
 }
 
-/* 学习中状态 */
+/* 理解中状态 */
 .document-content mark.kp-status-learning {
   background: #FEF9C3;
 }

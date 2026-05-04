@@ -2,9 +2,8 @@ import { postJson } from './client'
 
 export function sendChatMessage(message, docId) {
   if (!docId) return postJson('/api/test-llm', { message })
-  return postJson('/api/rag/query', {
+  return postJson('/api/agent/chat', {
     doc_id: docId,
-    question: message,
-    top_k: 4,
+    message,
   })
 }

@@ -11,7 +11,7 @@ from app.schemas.knowledge import RagSource
 from app.services.llm_service import REQUEST_PROXIES, call_deepseek
 
 
-RAG_SYSTEM_PROMPT = """你是一个严谨的文档学习助手。请只依据给定的文档片段回答学生问题。
+RAG_SYSTEM_PROMPT = """你是一个严谨的文档问答助手。请只依据给定的文档片段回答用户问题。
 
 回答要求：
 1. 先直接回答问题，再补充必要解释
@@ -21,7 +21,7 @@ RAG_SYSTEM_PROMPT = """你是一个严谨的文档学习助手。请只依据给
 5. 最多 300 字"""
 
 
-SUMMARY_SYSTEM_PROMPT = """你是一个文档整理助手。请为学习型 RAG 问答生成文档摘要。
+SUMMARY_SYSTEM_PROMPT = """你是一个文档整理助手。请为文档 RAG 问答生成文档摘要。
 
 要求：
 1. 概括主题、核心概念、关键结论
@@ -295,7 +295,7 @@ def answer_with_rag(doc_id: str, question: str, top_k: int = 4) -> tuple[str, li
         {"role": "system", "content": RAG_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": f"【文档摘要】\n{summary or '无'}\n\n【检索片段】\n{context}\n\n【学生问题】\n{question}",
+            "content": f"【文档摘要】\n{summary or '无'}\n\n【检索片段】\n{context}\n\n【用户问题】\n{question}",
         },
     ]
     reply = call_deepseek(messages, temperature=0.2)

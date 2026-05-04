@@ -11,6 +11,11 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class AgentChatRequest(BaseModel):
+    message: str
+    doc_id: str | None = None
+
+
 class RagIndexRequest(BaseModel):
     doc_id: str
     text: str
@@ -24,6 +29,15 @@ class RagSource(BaseModel):
     content: str
     score: float
     retrieval_method: Literal["embedding", "keyword"] = "keyword"
+
+
+class AgentChatResponse(BaseModel):
+    reply: str
+    agent: str
+    intent: str
+    tools_used: List[str] = []
+    stop_reason: str
+    sources: List[RagSource] = []
 
 
 class RagQueryRequest(BaseModel):

@@ -12,7 +12,7 @@ function AppHeader({
       <div className="header-file">
         {fileName
           ? <span className="file-name">📄 {fileName}</span>
-          : <span className="header-hint">上传文档后开始学习</span>
+          : <span className="header-hint">上传文档后开始整理知识点</span>
         }
         {extracting && (
           <span className="extract-badge">
