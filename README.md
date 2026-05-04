@@ -9,6 +9,7 @@
 - 🎨 **原文高亮**：知识点在文档中以颜色标注，一目了然
 - 💬 **单击看简介**：点击高亮立刻显示 2-3 句精简解释
 - 📚 **双击深度讲解**：流式输出详细讲解，逐字呈现
+- 🔎 **文档 RAG 问答**：围绕当前文档检索片段并生成回答
 - 🧠 **学习记忆系统**：自动追踪学习进度，支持"已掌握"标记
 - 👁️ **隐藏已掌握**：聚焦未学习内容，避免重复打扰
 - 💾 **跨文档持久化**：学习记录保存在本地，多次使用不丢失
@@ -26,6 +27,7 @@
 - **SQLite**：用户学习记录存储
 - **DeepSeek API**：大语言模型服务
 - **LangGraph + LangChain**：多步知识点提取流水线
+- **SQLite Chunk Retrieval**：当前文档 RAG 检索
 
 ## 📦 项目结构
 
@@ -143,6 +145,8 @@ npm run dev
 | 路径 | 方法 | 用途 |
 |------|------|------|
 | `/api/extract-knowledge` | POST | 从文本块中提取知识点 |
+| `/api/rag/index` | POST | 接收完整文本并建立 RAG chunk 索引 |
+| `/api/rag/query` | POST | 检索当前文档并生成问答 |
 | `/api/explain-deep` | POST | 流式生成深度讲解 |
 | `/api/knowledge/click` | POST | 上报知识点点击 |
 | `/api/knowledge/mark-known` | POST | 标记为已掌握 |

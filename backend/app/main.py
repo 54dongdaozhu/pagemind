@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import ALLOWED_ORIGINS, validate_settings
 from app.core.database import init_db
-from app.routers import explain, extract, health, knowledge
+from app.routers import explain, extract, health, knowledge, rag
 
 
 def create_app() -> FastAPI:
@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(extract.router)
     app.include_router(explain.router)
     app.include_router(knowledge.router)
+    app.include_router(rag.router)
     return app
 
 

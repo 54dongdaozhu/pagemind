@@ -12,6 +12,7 @@ function KnowledgePanel({
   deepExplanation,
   extracting,
   docLoaded,
+  docId,
   knowledgePoints,
   stats,
   getKpStatus,
@@ -79,7 +80,7 @@ function KnowledgePanel({
           />
         </>
       ) : (
-        <ChatPanel />
+        <ChatPanel docId={docId} docLoaded={docLoaded} />
       )}
     </aside>
   )

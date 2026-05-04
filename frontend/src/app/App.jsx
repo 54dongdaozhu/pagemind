@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { indexRagDocument } from '../api/rag'
 import DocumentViewer from '../features/document/components/DocumentViewer'
 import { useDocumentUpload } from '../features/document/hooks/useDocumentUpload'
+import { htmlToPlainText } from '../features/document/documentUtils'
 import { useDeepExplanation } from '../features/explanation/useDeepExplanation'
 import AppHeader from '../features/layout/AppHeader'
 import {
@@ -12,6 +14,7 @@ import { useKnowledgeExtraction } from '../features/knowledge/hooks/useKnowledge
 import { useKnowledgeStatus } from '../features/knowledge/hooks/useKnowledgeStatus'
 import SidebarHeader from '../features/toc/components/SidebarHeader'
 import TocSidebar from '../features/toc/components/TocSidebar'
+import { hashString } from '../utils/hash'
 import '../styles/App.css'
 
 // ========== React 组件 ==========
@@ -19,6 +22,7 @@ import '../styles/App.css'
 function App() {
   const [selectedKP, setSelectedKP] = useState(null)
   const [hideKnown, setHideKnown] = useState(true)
+  const [currentDocId, setCurrentDocId] = useState('')
 
   // 目录相关
   const [tocItems, setTocItems] = useState([])
@@ -50,10 +54,23 @@ function App() {
     resetExtraction()
     setSelectedKP(null)
     resetDeep()
+    setCurrentDocId('')
     setTocItems([])
     setActiveTocId(null)
     highlightedIdsRef.current = new Set()
   }, [resetDeep, resetExtraction])
+
+  const handleHtmlLoaded = useCallback(async (html, file) => {
+    const plainText = htmlToPlainText(html)
+    const docId = hashString(`${file.name}:${plainText}`)
+    setCurrentDocId(docId)
+
+    indexRagDocument(docId, plainText, file.name).catch(err => {
+      console.error('RAG 索引失败:', err)
+    })
+
+    await extractAllChunks(html)
+  }, [extractAllChunks])
 
   const {
     fileName,
@@ -64,7 +81,7 @@ function App() {
   } = useDocumentUpload({
     docContentRef,
     onBeforeLoad: resetDocumentState,
-    onHtmlLoaded: extractAllChunks,
+    onHtmlLoaded: handleHtmlLoaded,
   })
 
   const {
@@ -244,6 +261,7 @@ function App() {
         deepExplanation={deepExplanation}
         extracting={extracting}
         docLoaded={docLoaded}
+        docId={currentDocId}
         knowledgePoints={uniqueKPs}
         stats={stats}
         getKpStatus={getKpStatus}

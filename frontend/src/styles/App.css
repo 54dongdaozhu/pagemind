@@ -952,6 +952,23 @@ body {
   padding: 10px 14px;
 }
 
+.chat-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.chat-source-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #EFF6FF;
+  color: #2563EB;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
 .chat-input-row {
   display: flex;
   gap: 6px;

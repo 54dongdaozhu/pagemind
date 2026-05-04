@@ -20,3 +20,16 @@ export function splitIntoChunks(html) {
   if (buffer.length > 0) chunks.push(buffer)
   return chunks
 }
+
+
+export function htmlToPlainText(html) {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const blocks = []
+  const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, td')
+  elements.forEach(el => {
+    const text = el.textContent.trim()
+    if (text.length > 0) blocks.push(text)
+  })
+  return blocks.join('\n\n')
+}

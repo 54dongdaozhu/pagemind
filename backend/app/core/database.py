@@ -34,4 +34,27 @@ def init_db():
                 created_at TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rag_chunks (
+                doc_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (doc_id, chunk_index)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc_id
+            ON rag_chunks(doc_id)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rag_documents (
+                doc_id TEXT PRIMARY KEY,
+                title TEXT,
+                summary TEXT NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
         conn.commit()

@@ -29,7 +29,7 @@ export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded })
       const result = await mammoth.convertToHtml({ arrayBuffer })
       if (docContentRef.current) docContentRef.current.innerHTML = result.value
       setDocLoaded(true)
-      await onHtmlLoaded(result.value)
+      await onHtmlLoaded(result.value, file)
     } catch (err) {
       setError('文档解析失败：' + err.message)
     } finally {

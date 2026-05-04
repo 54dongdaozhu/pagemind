@@ -11,6 +11,31 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class RagIndexRequest(BaseModel):
+    doc_id: str
+    text: str
+    title: str | None = None
+    chunk_size: int = 800
+    chunk_overlap: int = 120
+
+
+class RagSource(BaseModel):
+    chunk_index: int
+    content: str
+    score: float
+
+
+class RagQueryRequest(BaseModel):
+    doc_id: str
+    question: str
+    top_k: int = 4
+
+
+class RagQueryResponse(BaseModel):
+    reply: str
+    sources: List[RagSource]
+
+
 class ExtractRequest(BaseModel):
     text: str
     chunk_id: str
