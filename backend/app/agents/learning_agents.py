@@ -2,7 +2,7 @@ import logging
 
 from app.agents.prompts import FALLBACK_PROMPT, SUPERVISOR_PROMPT, SYNTHESIS_PROMPT, TUTOR_PROMPT
 from app.agents.state import Intent, LearningAgentState
-from app.agents.tools import read_document_summary, search_document
+from app.agents.tool_registry import call_tool, list_tools
 from app.agents.utils import safe_parse_json
 from app.services.llm_service import call_deepseek
 
@@ -19,7 +19,7 @@ def supervisor_agent(message: str, doc_id: str | None) -> dict:
         }
 
     messages = [
-        {"role": "system", "content": SUPERVISOR_PROMPT},
+        {"role": "system", "content": f"{SUPERVISOR_PROMPT}\n\n【可用工具】\n{_format_tool_catalog()}"},
         {"role": "user", "content": message},
     ]
     try:
@@ -47,9 +47,14 @@ def retrieval_agent(state: LearningAgentState) -> dict:
             "stop_reason": "no_document",
         }
 
-    summary = read_document_summary(state["doc_id"])
-    sources = search_document(state["doc_id"], state["query"], top_k=5)
-    tools_used = [*state["tools_used"], "read_document_summary", "search_document"]
+    summary = call_tool("read_document_summary", doc_id=state["doc_id"])
+    sources = call_tool(
+        "search_document_chunks",
+        doc_id=state["doc_id"],
+        query=state["query"],
+        top_k=5,
+    )
+    tools_used = [*state["tools_used"], "read_document_summary", "search_document_chunks"]
     return {
         "summary": summary,
         "sources": sources,
@@ -168,6 +173,13 @@ def _heuristic_supervisor(message: str) -> dict:
         "query": text,
         "active_agent": active_agent,
     }
+
+
+def _format_tool_catalog() -> str:
+    lines = []
+    for tool in list_tools():
+        lines.append(f"- {tool['name']}: {tool['description']} 使用时机：{tool['when_to_use']}")
+    return "\n".join(lines)
 
 
 def _format_context(sources) -> str:

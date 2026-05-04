@@ -1,10 +1,16 @@
 from fastapi import APIRouter
 
 from app.agents.learning_agents import run_learning_agents
+from app.agents.tool_registry import list_tools
 from app.schemas.knowledge import AgentChatRequest, AgentChatResponse
 
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+
+@router.get("/tools")
+def agent_tools():
+    return {"tools": list_tools()}
 
 
 @router.post("/chat", response_model=AgentChatResponse)
