@@ -25,6 +25,7 @@
 - **Python 3.10+** + **FastAPI**：Web 框架
 - **SQLite**：用户学习记录存储
 - **DeepSeek API**：大语言模型服务
+- **LangGraph + LangChain**：多步知识点提取流水线
 
 ## 📦 项目结构
 
@@ -83,7 +84,7 @@ source venv/bin/activate  # Mac/Linux
 # venv\Scripts\activate   # Windows
 
 # 安装依赖
-pip install fastapi uvicorn python-dotenv requests
+pip install -r requirements.txt
 \`\`\`
 
 在 `backend/` 目录下创建 `.env` 文件：
@@ -163,7 +164,7 @@ mammoth.js 解析为 HTML
    ↓
 按段落切分成文本块(每块约 800 字)
    ↓
-逐块调用 LLM,要求返回 JSON 格式的知识点列表
+LangGraph 三步流水线：召回提取 → 质量过滤 → 重要性分级
    ↓
 前端用 TreeWalker API 在原文中精确定位并包裹 <mark> 标签
    ↓

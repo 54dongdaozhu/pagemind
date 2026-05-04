@@ -1,4 +1,4 @@
-export function highlightFirstMatch(container, keyword, kpId, kpType, status) {
+export function highlightFirstMatch(container, keyword, kpId, kpType, status, importance) {
   if (!keyword || !container) return false
   const walker = document.createTreeWalker(
     container,
@@ -20,7 +20,12 @@ export function highlightFirstMatch(container, keyword, kpId, kpType, status) {
       const before = text.slice(0, idx)
       const after = text.slice(idx + keyword.length)
       const mark = document.createElement('mark')
-      mark.className = `kp-highlight kp-highlight-${kpType} kp-status-${status || 'unknown'}`
+      mark.className = [
+        'kp-highlight',
+        `kp-highlight-${kpType}`,
+        `kp-status-${status || 'unknown'}`,
+        importance === 'high' ? 'kp-high' : '',
+      ].filter(Boolean).join(' ')
       mark.dataset.kpId = kpId
       mark.dataset.kpText = keyword
       mark.textContent = keyword

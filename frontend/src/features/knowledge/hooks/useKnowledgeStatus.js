@@ -10,6 +10,14 @@ import {
 
 export function useKnowledgeStatus(knowledgePoints) {
   const [kpStatusMap, setKpStatusMap] = useState({})
+  const knowledgeTextKey = useMemo(
+    () => knowledgePoints.map(kp => kp.text).join('\u0001'),
+    [knowledgePoints],
+  )
+  const knowledgeTexts = useMemo(
+    () => (knowledgeTextKey ? knowledgeTextKey.split('\u0001') : []),
+    [knowledgeTextKey],
+  )
 
   const getKpStatus = useCallback(
     (kpText) => kpStatusMap[kpText] || 'unknown',
@@ -17,9 +25,8 @@ export function useKnowledgeStatus(knowledgePoints) {
   )
 
   useEffect(() => {
-    if (knowledgePoints.length === 0) return
-    const texts = knowledgePoints.map(kp => kp.text)
-    fetchKnowledgeStatuses(texts)
+    if (knowledgeTexts.length === 0) return
+    fetchKnowledgeStatuses(knowledgeTexts)
       .then(data => {
         if (!data) return
         const map = {}
@@ -27,7 +34,7 @@ export function useKnowledgeStatus(knowledgePoints) {
         setKpStatusMap(prev => ({ ...prev, ...map }))
       })
       .catch(err => console.error('拉取状态失败:', err))
-  }, [knowledgePoints])
+  }, [knowledgeTextKey, knowledgeTexts])
 
   const recordClick = useCallback(async (kp) => {
     try {

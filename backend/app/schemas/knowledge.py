@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 
 from pydantic import BaseModel
 
@@ -20,6 +20,7 @@ class KnowledgePoint(BaseModel):
     text: str
     type: str
     explanation: str
+    importance: Literal["high", "medium"] = "medium"
 
 
 class ExtractResponse(BaseModel):

@@ -81,7 +81,7 @@ function App() {
     for (const kp of uniqueKPs) {
       if (highlightedIdsRef.current.has(kp.id)) continue
       const status = getKpStatus(kp.text)
-      highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type, status)
+      highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type, status, kp.importance)
       highlightedIdsRef.current.add(kp.id)
     }
   }, [uniqueKPs, docLoaded, kpStatusMap, getKpStatus])

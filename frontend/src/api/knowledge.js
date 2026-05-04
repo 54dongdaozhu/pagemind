@@ -22,7 +22,7 @@ export function markKnowledgeKnown(kp) {
 
 
 export function unmarkKnowledgeKnown(kp) {
-  return postJson('/api/knowledge/unmark-known', { kp_text: kp.text, kp_type: kp.type })
+  return postJson('/api/knowledge/unmark-known', { kp_text: kp.text })
 }
 
 

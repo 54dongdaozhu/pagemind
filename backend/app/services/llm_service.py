@@ -6,6 +6,9 @@ from fastapi import HTTPException
 from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
 
 
+REQUEST_PROXIES = {"http": None, "https": None}
+
+
 def call_deepseek(messages: list, temperature: float = 0.3, json_mode: bool = False) -> str:
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
@@ -21,7 +24,13 @@ def call_deepseek(messages: list, temperature: float = 0.3, json_mode: bool = Fa
         payload["response_format"] = {"type": "json_object"}
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=60,
+            proxies=REQUEST_PROXIES,
+        )
         response.raise_for_status()
         result = response.json()
         return result["choices"][0]["message"]["content"]
@@ -45,7 +54,14 @@ def call_deepseek_stream(messages: list, temperature: float = 0.5):
     }
 
     try:
-        with requests.post(url, headers=headers, json=payload, stream=True, timeout=60) as response:
+        with requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=60,
+            proxies=REQUEST_PROXIES,
+        ) as response:
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line:
@@ -66,3 +82,21 @@ def call_deepseek_stream(messages: list, temperature: float = 0.5):
                     continue
     except requests.exceptions.RequestException as e:
         yield f"\n\n[错误] LLM 调用失败: {str(e)}"
+
+
+def get_llm(temperature: float = 0.2):
+    """获取 LangChain ChatOpenAI 实例，供 LangGraph 节点使用。"""
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as e:
+        raise RuntimeError(
+            "缺少 LangGraph 提取依赖，请安装 langgraph langchain-openai langchain"
+        ) from e
+
+    return ChatOpenAI(
+        model="deepseek-chat",
+        api_key=DEEPSEEK_API_KEY,
+        base_url=DEEPSEEK_BASE_URL,
+        temperature=temperature,
+        timeout=60,
+    )
