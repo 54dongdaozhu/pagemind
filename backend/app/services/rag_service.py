@@ -1,9 +1,14 @@
+import json
 import re
 from datetime import datetime
 
+import chromadb
+import requests
+
+from app.core.config import CHROMA_PATH, EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL
 from app.core.database import get_db
 from app.schemas.knowledge import RagSource
-from app.services.llm_service import call_deepseek
+from app.services.llm_service import REQUEST_PROXIES, call_deepseek
 
 
 RAG_SYSTEM_PROMPT = """你是一个严谨的文档学习助手。请只依据给定的文档片段回答学生问题。
@@ -23,6 +28,10 @@ SUMMARY_SYSTEM_PROMPT = """你是一个文档整理助手。请为学习型 RAG 
 2. 保留重要术语
 3. 不编造原文没有的信息
 4. 150-300 字"""
+
+
+_chroma_client = None
+_chroma_collection = None
 
 
 def split_text_for_rag(text: str, chunk_size: int = 800, chunk_overlap: int = 120) -> list[str]:
@@ -69,15 +78,26 @@ def index_document_text(
     chunks = split_text_for_rag(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     now = datetime.utcnow().isoformat()
     summary = summarize_document(normalized_text)
+    embeddings = embed_texts(chunks)
+    _index_chunks_in_chroma(doc_id, chunks, embeddings)
 
     with get_db() as conn:
         conn.execute("DELETE FROM rag_chunks WHERE doc_id = ?", (doc_id,))
         conn.executemany(
             """
-            INSERT INTO rag_chunks (doc_id, chunk_index, content, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO rag_chunks (doc_id, chunk_index, content, embedding_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            [(doc_id, idx, content, now) for idx, content in enumerate(chunks)],
+            [
+                (
+                    doc_id,
+                    idx,
+                    content,
+                    json.dumps(embeddings[idx]) if embeddings else None,
+                    now,
+                )
+                for idx, content in enumerate(chunks)
+            ],
         )
         conn.execute(
             """
@@ -124,10 +144,14 @@ def get_document_summary(doc_id: str) -> str:
 
 def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 4) -> list[RagSource]:
     top_k = max(1, min(top_k, 8))
+    chroma_results = _retrieve_by_chroma(doc_id, question, top_k)
+    if chroma_results:
+        return chroma_results
+
     with get_db() as conn:
         rows = conn.execute(
             """
-            SELECT chunk_index, content
+            SELECT chunk_index, content, embedding_json
             FROM rag_chunks
             WHERE doc_id = ?
             ORDER BY chunk_index ASC
@@ -135,6 +159,111 @@ def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 4) -> list
             (doc_id,),
         ).fetchall()
 
+    return _retrieve_by_keyword(rows, question, top_k)
+
+
+def embed_texts(texts: list[str]) -> list[list[float]] | None:
+    if not EMBEDDING_API_KEY:
+        return None
+
+    cleaned = [text.strip() for text in texts if isinstance(text, str) and text.strip()]
+    if not cleaned:
+        return []
+
+    url = f"{EMBEDDING_BASE_URL.rstrip('/')}/embeddings"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {EMBEDDING_API_KEY}",
+    }
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "input": cleaned,
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=60,
+            proxies=REQUEST_PROXIES,
+        )
+        response.raise_for_status()
+        data = response.json()
+        ordered = sorted(data["data"], key=lambda item: item["index"])
+        return [item["embedding"] for item in ordered]
+    except Exception:
+        return None
+
+
+def _get_chroma_collection():
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is not None:
+        return _chroma_collection
+
+    CHROMA_PATH.mkdir(parents=True, exist_ok=True)
+    _chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+    _chroma_collection = _chroma_client.get_or_create_collection(
+        name="rag_chunks",
+        metadata={"hnsw:space": "cosine"},
+    )
+    return _chroma_collection
+
+
+def _index_chunks_in_chroma(doc_id: str, chunks: list[str], embeddings: list[list[float]] | None):
+    if not embeddings or len(embeddings) != len(chunks):
+        return
+
+    collection = _get_chroma_collection()
+    existing = collection.get(where={"doc_id": doc_id}, include=[])
+    existing_ids = existing.get("ids", [])
+    if existing_ids:
+        collection.delete(ids=existing_ids)
+
+    ids = [_chunk_id(doc_id, idx) for idx in range(len(chunks))]
+    collection.upsert(
+        ids=ids,
+        documents=chunks,
+        embeddings=embeddings,
+        metadatas=[
+            {"doc_id": doc_id, "chunk_index": idx}
+            for idx in range(len(chunks))
+        ],
+    )
+
+
+def _retrieve_by_chroma(doc_id: str, question: str, top_k: int) -> list[RagSource]:
+    query_embeddings = embed_texts([question])
+    if not query_embeddings:
+        return []
+
+    try:
+        result = _get_chroma_collection().query(
+            query_embeddings=query_embeddings,
+            n_results=top_k,
+            where={"doc_id": doc_id},
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception:
+        return []
+
+    documents = result.get("documents", [[]])[0]
+    metadatas = result.get("metadatas", [[]])[0]
+    distances = result.get("distances", [[]])[0]
+    sources = []
+    for document, metadata, distance in zip(documents, metadatas, distances):
+        sources.append(
+            RagSource(
+                chunk_index=metadata["chunk_index"],
+                content=document,
+                score=round(max(0.0, 1.0 - float(distance)), 4),
+                retrieval_method="embedding",
+            )
+        )
+    return sources
+
+
+def _retrieve_by_keyword(rows, question: str, top_k: int) -> list[RagSource]:
     scored = []
     for row in rows:
         score = _score_chunk(question, row["content"])
@@ -144,6 +273,7 @@ def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 4) -> list
                     chunk_index=row["chunk_index"],
                     content=row["content"],
                     score=round(score, 3),
+                    retrieval_method="keyword",
                 )
             )
 
@@ -250,3 +380,7 @@ def _term_weight(term: str) -> float:
     if re.fullmatch(r"[\u4e00-\u9fff]+", term):
         return 1.0 + min(len(term), 6) * 0.25
     return 1.5 + min(len(term), 10) * 0.1
+
+
+def _chunk_id(doc_id: str, chunk_index: int) -> str:
+    return f"{doc_id}:{chunk_index}"

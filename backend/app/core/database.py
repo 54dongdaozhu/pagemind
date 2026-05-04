@@ -39,6 +39,7 @@ def init_db():
                 doc_id TEXT NOT NULL,
                 chunk_index INTEGER NOT NULL,
                 content TEXT NOT NULL,
+                embedding_json TEXT,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (doc_id, chunk_index)
             )
@@ -47,6 +48,7 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc_id
             ON rag_chunks(doc_id)
         """)
+        _ensure_column(conn, "rag_chunks", "embedding_json", "TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS rag_documents (
                 doc_id TEXT PRIMARY KEY,
@@ -58,3 +60,10 @@ def init_db():
             )
         """)
         conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str):
+    columns = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    if any(row["name"] == column_name for row in columns):
+        return
+    conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")

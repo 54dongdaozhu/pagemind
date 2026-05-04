@@ -54,6 +54,7 @@ function ChatPanel({ docId, docLoaded }) {
                 {msg.sources.map(source => (
                   <span key={source.chunk_index} className="chat-source-chip">
                     片段 {source.chunk_index + 1}
+                    {source.retrieval_method === 'embedding' ? ' · 向量' : ''}
                   </span>
                 ))}
               </div>

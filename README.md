@@ -27,7 +27,7 @@
 - **SQLite**：用户学习记录存储
 - **DeepSeek API**：大语言模型服务
 - **LangGraph + LangChain**：多步知识点提取流水线
-- **SQLite Chunk Retrieval**：当前文档 RAG 检索
+- **Embedding RAG + SQLite**：当前文档向量检索与摘要记忆
 
 ## 📦 项目结构
 
@@ -94,6 +94,11 @@ pip install -r requirements.txt
 \`\`\`
 DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# 可选：启用 RAG 向量检索。未配置时自动回退关键词检索
+EMBEDDING_API_KEY=你的_Embedding_API_Key
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_MODEL=text-embedding-3-small
 \`\`\`
 
 启动后端：

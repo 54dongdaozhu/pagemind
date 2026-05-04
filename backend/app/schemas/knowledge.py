@@ -23,6 +23,7 @@ class RagSource(BaseModel):
     chunk_index: int
     content: str
     score: float
+    retrieval_method: Literal["embedding", "keyword"] = "keyword"
 
 
 class RagQueryRequest(BaseModel):
