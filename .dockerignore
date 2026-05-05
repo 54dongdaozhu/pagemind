@@ -1,0 +1,13 @@
+.git
+.DS_Store
+**/__pycache__
+**/*.pyc
+**/.env
+**/*.env
+**/venv
+**/.venv
+**/node_modules
+**/dist
+backend/user_data.db
+backend/chroma_store
+test-docs

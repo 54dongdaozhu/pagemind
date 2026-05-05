@@ -205,6 +205,67 @@ ai-study-tool/
 - Python ≥ 3.10
 - DeepSeek API Key（[去注册](https://platform.deepseek.com)）
 
+### Docker Compose 一键启动
+
+如果你本机已安装 Docker，可以不单独配置 Node.js / Python 环境，直接用 Docker Compose 启动前后端：
+
+```bash
+cp .env.example .env
+```
+
+编辑项目根目录的 `.env`，填入你的 `DEEPSEEK_API_KEY`：
+
+```env
+DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# 可选：启用 RAG 向量检索。未配置时自动回退关键词检索
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+然后启动：
+
+```bash
+docker compose up --build
+```
+
+启动完成后访问：
+
+- 前端：http://localhost:5173
+- 后端 API：http://localhost:8000
+- 接口文档：http://localhost:8000/docs
+
+容器启动时会自动运行：
+
+- 后端：`uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
+- 前端：`npm run dev -- --host 0.0.0.0`
+
+SQLite 数据库和 ChromaDB 向量库会持久化到 Docker volume `ai-study-tool_backend-data`，前端依赖会放在 `frontend-node-modules` volume 中。停止服务按 `Ctrl+C`，后台启动可使用：
+
+```bash
+docker compose up -d --build
+```
+
+查看日志：
+
+```bash
+docker compose logs -f
+```
+
+停止并保留数据：
+
+```bash
+docker compose down
+```
+
+如果要连同 Docker volume 中的数据一起清空：
+
+```bash
+docker compose down -v
+```
+
 ### 1. 克隆/进入项目
 
 ```bash

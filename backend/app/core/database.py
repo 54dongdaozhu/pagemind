@@ -15,6 +15,8 @@ def get_db():
 
 
 def init_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_knowledge (
