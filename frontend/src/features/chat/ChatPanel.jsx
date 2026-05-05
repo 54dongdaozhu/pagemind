@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { sendChatMessage } from '../../api/chat'
+import { markdownToHtml } from '../../utils/markdown'
 
 function ChatPanel({ docId, docLoaded }) {
   const [messages, setMessages] = useState([])
@@ -48,7 +49,14 @@ function ChatPanel({ docId, docLoaded }) {
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
-            <div>{msg.content}</div>
+            {msg.role === 'assistant' ? (
+              <div
+                className="chat-markdown"
+                dangerouslySetInnerHTML={{ __html: markdownToHtml(msg.content) }}
+              />
+            ) : (
+              <div className="chat-plain-text">{msg.content}</div>
+            )}
             {msg.sources?.length > 0 && (
               <div className="chat-sources">
                 {msg.sources.map(source => (

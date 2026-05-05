@@ -1006,7 +1006,6 @@ body {
   padding: 7px 10px;
   border-radius: var(--radius-md);
   word-break: break-word;
-  white-space: pre-wrap;
 }
 
 .chat-msg-user {
@@ -1024,6 +1023,93 @@ body {
   align-self: flex-start;
   max-width: 95%;
   border-bottom-left-radius: 3px;
+}
+
+.chat-plain-text {
+  white-space: pre-wrap;
+}
+
+.chat-markdown {
+  white-space: normal;
+}
+
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 0.45em 0 0.35em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.chat-markdown h1 { font-size: 1.1rem; }
+.chat-markdown h2 { font-size: 1.02rem; }
+.chat-markdown h3 { font-size: 0.96rem; }
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 { font-size: 0.9rem; }
+
+.chat-markdown p {
+  margin: 0.45em 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.35em 0 0.5em;
+  padding-left: 1.25em;
+}
+
+.chat-markdown li {
+  margin: 0.18em 0;
+  padding-left: 0.15em;
+}
+
+.chat-markdown strong {
+  font-weight: 700;
+}
+
+.chat-markdown blockquote {
+  margin: 0.45em 0;
+  padding-left: 0.8em;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.chat-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.6em 0;
+}
+
+.chat-markdown pre {
+  overflow-x: auto;
+  margin: 0.55em 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #F8FAFC;
+  border: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+.chat-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.chat-markdown :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #F8FAFC;
 }
 
 .chat-msg-loading {

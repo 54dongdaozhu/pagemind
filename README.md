@@ -29,6 +29,106 @@
 - **LangGraph + LangChain**：多步知识点提取流水线
 - **Embedding RAG + ChromaDB**：当前文档向量检索与摘要记忆
 
+## 🏗️ 系统架构
+
+本项目采用前后端分离架构，前端负责文档解析、阅读交互和原文高亮，后端负责知识点提取、RAG 检索问答、LLM 调用和学习状态持久化。
+
+```mermaid
+flowchart LR
+    User[用户] --> Frontend[React 19 + Vite 前端]
+
+    subgraph FE[前端层]
+        Frontend --> Upload[文档上传与解析]
+        Upload --> Parser[mammoth.js / PDF.js / TXT / Markdown Parser]
+        Parser --> HtmlRender[文档 HTML 渲染]
+        Frontend --> Highlight[TreeWalker 原文高亮]
+        Highlight --> Reader[阅读 / 点击简介 / 双击深度讲解]
+    end
+
+    subgraph BE[后端服务层]
+        API[FastAPI 后端 API]
+        API --> Extract[知识点提取服务]
+        API --> Explain[知识点讲解服务]
+        API --> RAG[RAG 文档问答服务]
+        API --> Knowledge[掌握状态服务]
+    end
+
+    subgraph AI[AI 能力层]
+        Extract --> LangGraph[LangGraph 多步提取流水线]
+        LangGraph --> LLM[DeepSeek / OpenAI Compatible LLM]
+        Explain --> LLM
+        RAG --> LLM
+    end
+
+    subgraph Storage[存储层]
+        RAG --> Chunk[文本切块]
+        Chunk --> Embedding[Embedding API]
+        Embedding --> Chroma[ChromaDB 向量库]
+        Knowledge --> SQLite[(SQLite 本地数据库)]
+    end
+
+    Frontend --> API
+```
+
+### 架构说明
+
+- **前端层**：基于 React 19 + Vite，负责文档上传、文档解析、HTML 渲染、原文高亮和用户交互。
+- **后端服务层**：基于 FastAPI，提供知识点提取、知识点讲解、RAG 文档问答、学习状态管理等接口。
+- **AI 能力层**：通过 LangGraph 将知识点提取拆分为多步流程，并统一调用 OpenAI-compatible LLM 服务。
+- **存储层**：使用 ChromaDB 存储文档向量索引，使用 SQLite 保存知识点和掌握状态等轻量数据。
+
+---
+
+## 🔁 核心业务流程
+
+下面展示用户从上传文档到知识点提取、RAG 建索引、点击知识点查看讲解的完整流程。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant FE as React 前端
+    participant BE as FastAPI 后端
+    participant LG as LangGraph 提取流水线
+    participant LLM as LLM 服务
+    participant DB as SQLite
+    participant VS as ChromaDB
+
+    U->>FE: 上传文档
+    FE->>FE: 解析 docx / PDF / txt / Markdown
+    FE->>FE: 渲染 HTML 文档内容
+
+    FE->>BE: 提交文本块进行知识点提取
+    BE->>LG: 启动多步提取流程
+    LG->>LLM: 初步提取知识点
+    LG->>LLM: 过滤低质量结果
+    LG->>LLM: 重要性分级
+    LG-->>BE: 返回最终知识点
+    BE-->>FE: 返回知识点列表
+
+    FE->>FE: TreeWalker 定位原文并高亮
+
+    FE->>BE: 提交全文建立 RAG 索引
+    BE->>VS: 写入 ChromaDB 向量索引
+
+    FE->>BE: 查询/更新掌握状态
+    BE->>DB: 读写 SQLite
+
+    U->>FE: 点击/双击知识点
+    FE->>BE: 请求简介或深度讲解
+    BE->>LLM: 生成解释
+    BE-->>FE: 流式返回讲解内容
+```
+
+### 流程说明
+
+1. 用户上传文档后，前端先在浏览器侧完成文档解析和 HTML 渲染。
+2. 前端将文本内容提交给 FastAPI 后端，由 LangGraph 执行多步知识点提取。
+3. 后端调用 LLM 完成初步提取、过滤和重要性分级，并返回最终知识点列表。
+4. 前端使用 TreeWalker 在原文中定位知识点并进行高亮展示。
+5. 后端将文档切块、生成 Embedding，并写入 ChromaDB，用于后续 RAG 文档问答。
+6. 用户点击或双击知识点时，前端请求后端生成简介或深度讲解。
+7. 用户的掌握状态通过 FastAPI 写入 SQLite，避免前端直接操作数据库。
+
 ## 📦 项目结构
 
 ```text
