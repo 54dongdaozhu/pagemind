@@ -129,6 +129,12 @@ sequenceDiagram
 6. 用户点击或双击知识点时，前端请求后端生成简介或深度讲解。
 7. 用户的掌握状态通过 FastAPI 写入 SQLite，避免前端直接操作数据库。
 
+## 🎬 Demo 演示
+
+本 Demo 展示了从文档上传、知识点提取、原文高亮到 RAG 文档问答的完整流程。
+
+[点击观看 Demo 视频](test-docs/demo/demo.mp4)
+
 ## 📦 项目结构
 
 ```text
