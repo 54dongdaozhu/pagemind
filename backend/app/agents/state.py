@@ -13,7 +13,18 @@ class KnowledgeAgentState(TypedDict):
     stop_reason: str
 
 
-Intent = Literal["qa", "explain", "summarize", "compare", "unknown"]
+Intent = Literal[
+    "qa",
+    "explain",
+    "summarize",
+    "compare",
+    "practice",
+    "grade",
+    "relation",
+    "structure",
+    "review",
+    "unknown",
+]
 
 
 class LearningAgentState(TypedDict):

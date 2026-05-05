@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from app.agents import tools
 
@@ -12,7 +12,7 @@ class AgentTool:
     return_schema: dict[str, Any]
     when_to_use: str
     constraints: list[str]
-    function: Callable[..., Any]
+    function: Any
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -178,6 +178,87 @@ TOOL_REGISTRY: dict[str, AgentTool] = {
         constraints=["应尽量提供原文上下文。", "当前工具内部聚合流式结果后返回完整文本。"],
         function=tools.explain_knowledge_with_context,
     ),
+    "extract_document_structure": AgentTool(
+        name="extract_document_structure",
+        description="从文档内容中抽取主题、章节层级、部分摘要和建议学习顺序。",
+        args_schema={
+            "text": {"type": "string", "description": "用于分析结构的文档文本、摘要或相关片段。"},
+        },
+        return_schema={
+            "title": {"type": "string", "description": "推断出的文档标题或主题。"},
+            "summary": {"type": "string", "description": "结构化摘要。"},
+            "sections": {"type": "array", "description": "章节或主题分区列表。"},
+            "suggested_order": {"type": "array", "description": "建议学习顺序。"},
+        },
+        when_to_use="用户想了解文档结构、章节脉络、学习路线，或 DocumentStructureAgent 初始化文档学习资产时使用。",
+        constraints=["输入内容越完整，结构越可靠。", "不要把推断出的结构当成原文标题。"],
+        function=tools.extract_document_structure,
+    ),
+    "generate_practice": AgentTool(
+        name="generate_practice",
+        description="基于文档上下文生成自测题、解释题、应用题、对比题或复述提示。",
+        args_schema={
+            "context": {"type": "string", "description": "生成练习所依据的文档上下文。"},
+            "question_count": {"type": "integer", "description": "练习数量，1 到 10。"},
+            "difficulty": {"type": "string", "description": "难度：easy、medium、hard。"},
+            "practice_type": {"type": "string", "description": "练习类型：mixed、short_answer、application、compare、recall。"},
+        },
+        return_schema={
+            "items": {"type": "array", "description": "练习列表，包含 type、question、reference_answer、target_knowledge、difficulty。"},
+        },
+        when_to_use="用户要求出题、自测、巩固理解、复述训练或应用练习时使用。",
+        constraints=["必须依据给定文档上下文。", "生成的是学习练习，不默认是考试题。"],
+        function=tools.generate_practice,
+    ),
+    "grade_answer": AgentTool(
+        name="grade_answer",
+        description="基于文档依据批改用户答案，给出得分、反馈、缺失点和复习目标。",
+        args_schema={
+            "question": {"type": "string", "description": "被回答的问题。"},
+            "user_answer": {"type": "string", "description": "用户提交的答案。"},
+            "reference_context": {"type": "string", "description": "用于批改的文档依据。"},
+        },
+        return_schema={
+            "score": {"type": "number", "description": "0 到 1 的评分。"},
+            "is_correct": {"type": "boolean", "description": "是否基本正确。"},
+            "feedback": {"type": "string", "description": "批改反馈。"},
+            "missing_points": {"type": "array", "description": "缺失或错误点。"},
+            "review_targets": {"type": "array", "description": "建议复习目标。"},
+        },
+        when_to_use="用户要求批改答案、判断回答是否正确或分析错因时使用。",
+        constraints=["需要题目、用户答案和文档依据。", "没有文档依据时只能给低置信反馈。"],
+        function=tools.grade_answer,
+    ),
+    "map_knowledge_relations": AgentTool(
+        name="map_knowledge_relations",
+        description="分析文档知识点之间的前置、支撑、对比、例子、组成等关系。",
+        args_schema={
+            "context": {"type": "string", "description": "关系分析所依据的文档上下文。"},
+            "knowledge_points": {"type": "array", "description": "可选知识点文本列表。"},
+        },
+        return_schema={
+            "relations": {"type": "array", "description": "关系列表，包含 source、target、relation、reason。"},
+        },
+        when_to_use="用户想看概念关系、知识图谱、区别联系、前置依赖或学习路径时使用。",
+        constraints=["关系必须能从上下文合理推出。", "不要编造文档没有支持的强关系。"],
+        function=tools.map_knowledge_relations,
+    ),
+    "schedule_review": AgentTool(
+        name="schedule_review",
+        description="根据文档上下文和学习状态生成复习优先级、复习时间和下一步动作建议。",
+        args_schema={
+            "context": {"type": "string", "description": "用于复盘的文档上下文。"},
+            "learning_stats": {"type": "object", "description": "可选学习状态统计。"},
+            "knowledge_status": {"type": "array", "description": "可选知识点状态列表。"},
+        },
+        return_schema={
+            "review_items": {"type": "array", "description": "复习项目列表，包含 text、priority、reason、suggested_time、next_action。"},
+            "summary": {"type": "string", "description": "整体复习建议。"},
+        },
+        when_to_use="用户要求复习计划、下一步建议、薄弱点复盘或学习安排时使用。",
+        constraints=["当前版本只生成建议，不创建系统提醒。", "应优先使用真实学习状态数据。"],
+        function=tools.schedule_review,
+    ),
 }
 
 
@@ -194,4 +275,6 @@ def get_tool(name: str) -> AgentTool:
 
 def call_tool(name: str, **kwargs):
     tool = get_tool(name)
+    if hasattr(tool.function, "invoke"):
+        return tool.function.invoke(kwargs)
     return tool.function(**kwargs)

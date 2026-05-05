@@ -1,5 +1,12 @@
 import logging
 
+from app.agents.advanced_agents import (
+    document_structure_agent,
+    grading_agent,
+    practice_agent,
+    reflection_agent,
+    relation_mapping_agent,
+)
 from app.agents.prompts import FALLBACK_PROMPT, SUPERVISOR_PROMPT, SYNTHESIS_PROMPT, TUTOR_PROMPT
 from app.agents.state import Intent, LearningAgentState
 from app.agents.tool_registry import call_tool, list_tools
@@ -26,7 +33,18 @@ def supervisor_agent(message: str, doc_id: str | None) -> dict:
         raw_reply = call_deepseek(messages, temperature=0.1, json_mode=True)
         parsed = safe_parse_json(raw_reply)
         intent = parsed.get("intent", "qa")
-        if intent not in ["qa", "explain", "summarize", "compare", "unknown"]:
+        if intent not in [
+            "qa",
+            "explain",
+            "summarize",
+            "compare",
+            "practice",
+            "grade",
+            "relation",
+            "structure",
+            "review",
+            "unknown",
+        ]:
             intent = "qa"
         return {
             "intent": intent,
@@ -141,7 +159,17 @@ def run_learning_agents(message: str, doc_id: str | None = None) -> LearningAgen
 
     state.update(retrieval_agent(state))
 
-    if intent in ["summarize", "compare"]:
+    if intent == "practice":
+        state.update(practice_agent(state))
+    elif intent == "grade":
+        state.update(grading_agent(state))
+    elif intent == "relation":
+        state.update(relation_mapping_agent(state))
+    elif intent == "structure":
+        state.update(document_structure_agent(state))
+    elif intent == "review":
+        state.update(reflection_agent(state))
+    elif intent in ["summarize", "compare"]:
         state.update(synthesis_agent(state))
     else:
         state.update(tutor_agent(state))
@@ -155,10 +183,30 @@ def _heuristic_supervisor(message: str) -> dict:
     summarize_keywords = ["总结", "概括", "提炼", "笔记", "要点", "结构"]
     compare_keywords = ["比较", "区别", "联系", "相同", "不同"]
     explain_keywords = ["解释", "讲讲", "什么意思", "是什么", "为什么", "如何理解"]
+    practice_keywords = ["出题", "练习", "自测", "测试", "巩固", "复述"]
+    grade_keywords = ["批改", "评分", "对不对", "是否正确", "错因"]
+    relation_keywords = ["关系", "图谱", "前置", "依赖", "关联"]
+    structure_keywords = ["结构", "目录", "层级", "脉络", "框架"]
+    review_keywords = ["复习", "计划", "下一步", "薄弱", "安排"]
 
     intent = "qa"
     active_agent = "RetrievalAgent"
-    if any(keyword in text for keyword in summarize_keywords):
+    if any(keyword in text for keyword in practice_keywords):
+        intent = "practice"
+        active_agent = "PracticeAgent"
+    elif any(keyword in text for keyword in grade_keywords):
+        intent = "grade"
+        active_agent = "PracticeAgent"
+    elif any(keyword in text for keyword in relation_keywords):
+        intent = "relation"
+        active_agent = "RelationMappingAgent"
+    elif any(keyword in text for keyword in review_keywords):
+        intent = "review"
+        active_agent = "ReflectionAgent"
+    elif any(keyword in text for keyword in structure_keywords):
+        intent = "structure"
+        active_agent = "DocumentStructureAgent"
+    elif any(keyword in text for keyword in summarize_keywords):
         intent = "summarize"
         active_agent = "SynthesisAgent"
     elif any(keyword in text for keyword in compare_keywords):
