@@ -1,0 +1,23 @@
+services:
+  backend:
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend-data:/data
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      target: dev
+    ports:
+      - "5173:5173"
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  frontend-node-modules:

@@ -2,35 +2,29 @@ services:
   backend:
     build:
       context: ./backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       DATA_DIR: /data
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
     volumes:
-      - ./backend:/app
       - backend-data:/data
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
+      target: runner
     depends_on:
       - backend
     ports:
-      - "5173:5173"
-    environment:
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      - ./frontend:/app
-      - frontend-node-modules:/app/node_modules
-    command: npm run dev -- --host 0.0.0.0
+      - "80:80"
+    restart: unless-stopped
 
 volumes:
   backend-data:
-  frontend-node-modules:
