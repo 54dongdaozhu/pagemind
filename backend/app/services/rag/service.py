@@ -69,7 +69,7 @@ def summarize_document(text: str) -> str:
         return summary_input[:500]
 
 
-def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 4) -> list[RagSource]:
+def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 3) -> list[RagSource]:
     top_k = max(1, min(top_k, 8))
     chroma_results = retrieve_by_chroma(doc_id, question, top_k)
     if chroma_results:
@@ -79,7 +79,7 @@ def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 4) -> list
     return _retrieve_by_keyword(rows, question, top_k)
 
 
-def answer_with_rag(doc_id: str, question: str, top_k: int = 4) -> tuple[str, list[RagSource]]:
+def answer_with_rag(doc_id: str, question: str, top_k: int = 3) -> tuple[str, list[RagSource]]:
     sources = retrieve_relevant_chunks(doc_id=doc_id, question=question, top_k=top_k)
     summary = get_document_summary(doc_id)
     if not sources and not summary:
