@@ -133,7 +133,7 @@ sequenceDiagram
 
 本 Demo 展示了从文档上传、知识点提取、原文高亮到 RAG 文档问答的完整流程。
 
-[点击观看 Demo 视频](test-docs/demo/demo.mp4)
+https://github.com/user-attachments/assets/5fb9914e-ca63-4b83-ba4e-5a6e2969b06f
 
 ## 📦 项目结构
 
