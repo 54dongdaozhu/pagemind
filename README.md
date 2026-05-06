@@ -1,341 +1,306 @@
 # AI 文档学习助手
 
-AI 文档学习助手是一款面向文档阅读、知识整理和深度理解的本地优先学习工具。它可以解析 docx、PDF、txt 和 Markdown 文档，自动提取核心知识点，在原文中高亮展示，并通过简介、深度讲解和当前文档问答帮助用户更快消化内容。
+> 一款面向通用文档阅读、知识整理和深度理解场景的 AI 文档学习工具，能从 docx、PDF、纯文本和 Markdown 文档中自动提取核心知识点，通过高亮 + 智能讲解帮助用户高效消化内容。
 
-Demo:
+## ✨ 功能特性
 
-https://github.com/user-attachments/assets/5fb9914e-ca63-4b83-ba4e-5a6e2969b06f
+- 📄 **多格式文档加载**：上传 docx、PDF、txt、Markdown 文档，前端实时解析渲染
+- 🤖 **智能提取知识点**：通过 LLM 自动识别文档中的核心术语和公式
+- 🎨 **原文高亮**：知识点在文档中以颜色标注，一目了然
+- 💬 **单击看简介**：点击高亮立刻显示 2-3 句精简解释
+- 📚 **双击深度讲解**：流式输出详细讲解，逐字呈现
+- 🔎 **文档 RAG 问答**：围绕当前文档检索片段并生成回答
+- 🧠 **知识掌握记录**：自动追踪理解进度，支持"已掌握"标记
+- 👁️ **隐藏已掌握**：聚焦未掌握内容，避免重复打扰
+- 💾 **跨文档持久化**：掌握记录保存在本地，多次使用不丢失
 
-## 核心能力
-
-- 多格式文档解析：支持 docx、PDF、txt、Markdown，浏览器侧完成解析和渲染。
-- AI 知识点提取：调用 OpenAI-compatible LLM，自动识别术语、公式和重点概念。
-- 原文精准高亮：通过 TreeWalker 在文档 DOM 中定位知识点，并保持阅读上下文。
-- 单击简介、双击深讲：单击查看 2-3 句解释，双击流式生成更完整的讲解。
-- 当前文档 RAG 问答：为上传文档建立索引，围绕原文片段进行检索增强回答。
-- 学习状态记录：点击次数、理解中、已掌握等状态持久化到本地 SQLite。
-- 隐藏已掌握内容：过滤已经掌握的知识点，聚焦还需要复习的内容。
-
-## 技术栈
-
-| 层级 | 技术 |
-| --- | --- |
-| 前端 | React 19, Vite, mammoth.js, PDF.js, Fetch streaming |
-| 后端 | Python 3.10+, FastAPI, Pydantic, SQLite |
-| AI 编排 | DeepSeek/OpenAI-compatible API, LangGraph, LangChain |
-| 检索存储 | ChromaDB, Embedding API, 关键词检索兜底 |
-| 部署 | Docker Compose, nginx, GitHub Actions, GHCR |
-
-## 快速开始
-
-推荐优先使用 Docker Compose，配置最少，也和生产部署形态最接近。
-
-### 1. 准备环境变量
-
-```bash
-cp .env.example .env
-```
-
-编辑项目根目录的 `.env`：
-
-```env
-DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-
-# 可选。留空时 RAG 会自动回退到关键词检索。
-EMBEDDING_API_KEY=
-EMBEDDING_BASE_URL=https://api.openai.com/v1
-EMBEDDING_MODEL=text-embedding-3-small
-
-# Docker 生产模式前端端口。
-FRONTEND_PORT=80
-
-# 允许访问后端的前端来源。
-ALLOWED_ORIGINS=http://localhost
-
-# 本项目内置 SQLite + 本地 ChromaDB，建议保持 1。
-UVICORN_WORKERS=1
-```
-
-### 2. Docker 一键启动
-
-生产模式使用 nginx 提供前端静态资源，并把 `/api/*` 反向代理到后端：
-
-```bash
-docker compose -f docker-compose.yml up -d --build
-```
-
-启动后访问：
-
-- 应用入口：http://localhost
-- 健康检查：http://localhost/api/health
-
-查看日志：
-
-```bash
-docker compose -f docker-compose.yml logs -f
-```
-
-停止服务但保留数据：
-
-```bash
-docker compose -f docker-compose.yml down
-```
-
-清空容器和持久化数据：
-
-```bash
-docker compose -f docker-compose.yml down -v
-```
-
-### 3. Docker 开发模式
-
-直接运行 `docker compose up --build` 时，Compose 会自动合并 `docker-compose.override.yml`，进入开发模式：
-
-```bash
-docker compose up --build
-```
-
-- 前端：http://localhost:5173
-- 后端 API：http://localhost:8000
-- Swagger 文档：http://localhost:8000/docs
-- 前端使用 Vite dev server，并通过 proxy 转发 `/api/*`
-- 后端使用 `uvicorn --reload`
-
-## 本地开发
-
-如果你希望直接在本机运行前后端，可按下面方式启动。
-
-### 后端
-
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
-
-后端默认读取 `backend/.env`。如果使用本地启动，也可以在 `backend/` 下创建同样的配置：
-
-```env
-DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-EMBEDDING_API_KEY=
-EMBEDDING_BASE_URL=https://api.openai.com/v1
-EMBEDDING_MODEL=text-embedding-3-small
-```
+## 🛠️ 技术栈
 
 ### 前端
+- **React 19** + **Vite**：开发框架与构建工具
+- **mammoth.js + PDF.js**：docx 与 PDF 文档解析
+- **TreeWalker API**：文本高亮的 DOM 操作
+- **Fetch API + 流式读取**：对接 LLM 流式输出
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+### 后端
+- **Python 3.10+** + **FastAPI**：Web 框架
+- **SQLite**：用户知识掌握记录存储
+- **DeepSeek API**：大语言模型服务
+- **LangGraph + LangChain**：多步知识点提取流水线
+- **Embedding RAG + ChromaDB**：当前文档向量检索与摘要记忆
 
-前端默认运行在 http://localhost:5173，并把 API 请求代理到 http://localhost:8000。也可以通过 `VITE_API_BASE` 指定完整 API 地址。
+## 🏗️ 系统架构
 
-## 使用方式
-
-1. 打开应用并上传 docx、PDF、txt 或 Markdown 文档。
-2. 等待前端解析文档，后端提取知识点并建立当前文档索引。
-3. 在正文中查看高亮知识点，或在右侧列表浏览重点内容。
-4. 单击高亮查看简介，双击高亮触发流式深度讲解。
-5. 在问答面板中围绕当前文档提问。
-6. 将已经理解的内容标记为“已掌握”，之后可隐藏这些高亮。
-
-### 交互说明
-
-| 操作 | 效果 |
-| --- | --- |
-| 单击正文高亮 | 显示简短解释 |
-| 双击正文高亮 | 流式生成深度讲解 |
-| 单击右侧知识点卡片 | 滚动到正文对应位置 |
-| 双击右侧知识点卡片 | 直接触发深度讲解 |
-| 标记已掌握 | 知识点变为已掌握状态 |
-| 隐藏已掌握 | 只展示尚未掌握或理解中的知识点 |
-
-### 高亮状态
-
-| 状态 | 含义 |
-| --- | --- |
-| 黄色 | 术语，未掌握 |
-| 橙色 | 公式，未掌握 |
-| 浅色 | 理解中，通常表示已多次点击 |
-| 绿色 + 删除线 | 已掌握 |
-
-## 系统架构
+本项目采用前后端分离架构，前端负责文档解析、阅读交互和原文高亮，后端负责知识点提取、RAG 检索问答、LLM 调用和学习状态持久化。
 
 ```mermaid
 flowchart LR
-    User[用户] --> Frontend[React + Vite 前端]
+    User[用户] --> Frontend[React 19 + Vite 前端]
 
     subgraph FE[前端层]
-        Frontend --> Upload[文档上传]
-        Upload --> Parser[docx / PDF / txt / Markdown 解析]
-        Parser --> Render[HTML 渲染]
+        Frontend --> Upload[文档上传与解析]
+        Upload --> Parser[mammoth.js / PDF.js / TXT / Markdown Parser]
+        Parser --> HtmlRender[文档 HTML 渲染]
         Frontend --> Highlight[TreeWalker 原文高亮]
-        Highlight --> Reader[阅读交互]
+        Highlight --> Reader[阅读 / 点击简介 / 双击深度讲解]
     end
 
     subgraph BE[后端服务层]
-        API[FastAPI API]
-        API --> Extract[知识点提取]
-        API --> Explain[知识点讲解]
-        API --> Rag[RAG 问答]
-        API --> Knowledge[学习状态]
+        API[FastAPI 后端 API]
+        API --> Extract[知识点提取服务]
+        API --> Explain[知识点讲解服务]
+        API --> RAG[RAG 文档问答服务]
+        API --> Knowledge[掌握状态服务]
     end
 
     subgraph AI[AI 能力层]
-        Extract --> LangGraph[LangGraph 提取流程]
-        LangGraph --> LLM[DeepSeek / OpenAI-compatible LLM]
+        Extract --> LangGraph[LangGraph 多步提取流水线]
+        LangGraph --> LLM[DeepSeek / OpenAI Compatible LLM]
         Explain --> LLM
-        Rag --> LLM
+        RAG --> LLM
     end
 
     subgraph Storage[存储层]
-        Rag --> Chunks[文本切块]
-        Chunks --> Embedding[Embedding API]
-        Embedding --> Chroma[ChromaDB]
-        Knowledge --> SQLite[(SQLite)]
+        RAG --> Chunk[文本切块]
+        Chunk --> Embedding[Embedding API]
+        Embedding --> Chroma[ChromaDB 向量库]
+        Knowledge --> SQLite[(SQLite 本地数据库)]
     end
 
     Frontend --> API
 ```
 
-核心流程：
+### 架构说明
 
-1. 前端在浏览器中解析并渲染文档。
-2. 前端将文本切块后提交给后端。
-3. 后端通过 LangGraph 调用 LLM 完成提取、过滤和重要性分级。
-4. 前端把返回的知识点定位到原文并高亮。
-5. 后端为当前文档建立 ChromaDB 向量索引；未配置 embedding 时自动使用关键词检索。
-6. 用户点击、标记和问答产生的学习状态写入 SQLite。
+- **前端层**：基于 React 19 + Vite，负责文档上传、文档解析、HTML 渲染、原文高亮和用户交互。
+- **后端服务层**：基于 FastAPI，提供知识点提取、知识点讲解、RAG 文档问答、学习状态管理等接口。
+- **AI 能力层**：通过 LangGraph 将知识点提取拆分为多步流程，并统一调用 OpenAI-compatible LLM 服务。
+- **存储层**：使用 ChromaDB 存储文档向量索引，使用 SQLite 保存知识点和掌握状态等轻量数据。
 
-## 项目结构
+---
+
+## 🔁 核心业务流程
+
+下面展示用户从上传文档到知识点提取、RAG 建索引、点击知识点查看讲解的完整流程。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant FE as React 前端
+    participant BE as FastAPI 后端
+    participant LG as LangGraph 提取流水线
+    participant LLM as LLM 服务
+    participant DB as SQLite
+    participant VS as ChromaDB
+
+    U->>FE: 上传文档
+    FE->>FE: 解析 docx / PDF / txt / Markdown
+    FE->>FE: 渲染 HTML 文档内容
+
+    FE->>BE: 提交文本块进行知识点提取
+    BE->>LG: 启动多步提取流程
+    LG->>LLM: 初步提取知识点
+    LG->>LLM: 过滤低质量结果
+    LG->>LLM: 重要性分级
+    LG-->>BE: 返回最终知识点
+    BE-->>FE: 返回知识点列表
+
+    FE->>FE: TreeWalker 定位原文并高亮
+
+    FE->>BE: 提交全文建立 RAG 索引
+    BE->>VS: 写入 ChromaDB 向量索引
+
+    FE->>BE: 查询/更新掌握状态
+    BE->>DB: 读写 SQLite
+
+    U->>FE: 点击/双击知识点
+    FE->>BE: 请求简介或深度讲解
+    BE->>LLM: 生成解释
+    BE-->>FE: 流式返回讲解内容
+```
+
+### 流程说明
+
+1. 用户上传文档后，前端先在浏览器侧完成文档解析和 HTML 渲染。
+2. 前端将文本内容提交给 FastAPI 后端，由 LangGraph 执行多步知识点提取。
+3. 后端调用 LLM 完成初步提取、过滤和重要性分级，并返回最终知识点列表。
+4. 前端使用 TreeWalker 在原文中定位知识点并进行高亮展示。
+5. 后端将文档切块、生成 Embedding，并写入 ChromaDB，用于后续 RAG 文档问答。
+6. 用户点击或双击知识点时，前端请求后端生成简介或深度讲解。
+7. 用户的掌握状态通过 FastAPI 写入 SQLite，避免前端直接操作数据库。
+
+## 🎬 Demo 演示
+
+本 Demo 展示了从文档上传、知识点提取、原文高亮到 RAG 文档问答的完整流程。
+
+https://github.com/user-attachments/assets/5fb9914e-ca63-4b83-ba4e-5a6e2969b06f
+
+## 📦 项目结构
 
 ```text
 ai-study-tool/
-├── backend/                    # FastAPI 后端服务
-│   ├── app/
-│   │   ├── agents/             # LangGraph 学习 Agent
-│   │   ├── core/               # 配置、数据库初始化
-│   │   ├── routers/            # HTTP API 路由
-│   │   ├── schemas/            # Pydantic 请求/响应模型
-│   │   └── services/           # LLM、提取、讲解、RAG、掌握状态服务
-│   ├── main.py                 # uvicorn main:app 入口
-│   └── requirements.txt
-├── frontend/                   # React + Vite 前端应用
+├── frontend/                       # React + Vite 前端应用
+│   ├── public/                     # 静态资源
 │   ├── src/
-│   │   ├── api/                # 后端 API 封装
-│   │   ├── app/                # 应用入口与状态编排
-│   │   ├── features/           # 文档、知识点、讲解、问答等功能模块
-│   │   ├── styles/             # 页面样式
-│   │   ├── types/              # 常量与类型约定
-│   │   └── utils/              # 通用工具
-│   ├── package.json
-│   └── vite.config.js
-├── test-docs/                  # 测试文档样例
-├── docker-compose.yml          # 生产模式 Compose
-├── docker-compose.override.yml # 开发模式 Compose 覆盖
-├── docker-compose.deploy.yml   # 服务器部署 Compose
-├── .env.example                # 环境变量模板
+│   │   ├── main.jsx                # React 挂载入口
+│   │   ├── app/
+│   │   │   └── App.jsx             # 主界面编排：上传、阅读、讲解、问答
+│   │   ├── api/                    # 后端 API 访问层
+│   │   │   ├── client.js           # fetch 基础封装
+│   │   │   ├── knowledge.js        # 知识点提取/掌握状态接口
+│   │   │   ├── rag.js              # 文档索引与 RAG 问答接口
+│   │   │   └── chat.js             # Agent/聊天接口
+│   │   ├── features/               # 前端业务功能模块
+│   │   │   ├── document/           # 文档解析、文本切块、内容规范化
+│   │   │   ├── knowledge/          # 原文高亮与知识点定位
+│   │   │   ├── explanation/        # 深度讲解面板与流式输出 Hook
+│   │   │   ├── chat/               # 当前文档问答面板
+│   │   │   └── layout/             # 顶部栏等布局组件
+│   │   ├── styles/                 # 页面级样式
+│   │   ├── types/                  # 前端常量与类型约定
+│   │   ├── utils/                  # hash 等通用工具
+│   │   └── assets/                 # 图片与前端资源
+│   ├── package.json                # 前端依赖与 npm scripts
+│   └── vite.config.js              # Vite 配置
+├── backend/                        # FastAPI 后端服务
+│   ├── main.py                     # uvicorn main:app 兼容入口
+│   ├── requirements.txt            # Python 依赖
+│   ├── app/
+│   │   ├── main.py                 # FastAPI 创建、CORS、路由注册
+│   │   ├── core/
+│   │   │   ├── config.py           # 环境变量、API Key、CORS 配置
+│   │   │   └── database.py         # SQLite 初始化与连接
+│   │   ├── routers/                # HTTP API 路由
+│   │   │   ├── health.py           # 健康检查与 LLM 连通性测试
+│   │   │   ├── extract.py          # 知识点提取接口
+│   │   │   ├── explain.py          # 深度讲解流式接口
+│   │   │   ├── knowledge.py        # 点击、掌握状态、统计接口
+│   │   │   ├── rag.py              # 文档索引与检索问答接口
+│   │   │   └── agent.py            # 学习 Agent 对话接口
+│   │   ├── services/               # 核心业务服务
+│   │   │   ├── llm_service.py      # DeepSeek/OpenAI 兼容调用
+│   │   │   ├── extract_service.py  # 知识点提取流水线入口
+│   │   │   ├── explain_service.py  # 简介与深度讲解生成
+│   │   │   ├── knowledge_service.py # 掌握状态读写
+│   │   │   └── rag_service.py      # ChromaDB 向量索引与检索
+│   │   ├── agents/                 # LangGraph 学习 Agent
+│   │   ├── schemas/                # Pydantic 请求/响应模型
+│   │   └── models/                 # 领域常量与数据模型
+│   ├── chroma_store/               # ChromaDB 本地向量库（运行生成）
+│   ├── user_data.db                # SQLite 本地数据（运行生成）
+│   ├── .env                        # 本地密钥配置（不提交）
+│   └── venv/                       # Python 虚拟环境（不提交）
+├── test-docs/                      # 本地测试文档样例
+├── .gitignore
 └── README.md
 ```
 
-运行时生成的数据默认不会提交：
+> 说明：`venv/`、`.env`、`user_data.db`、`chroma_store/`、`__pycache__/` 等均为本地运行产物或敏感配置，应保持在 `.gitignore` 中，不作为源码提交。
 
-- `backend/user_data.db`：SQLite 学习状态
-- `backend/chroma_store/`：ChromaDB 向量库
-- `backend/.env`、根目录 `.env`：本地密钥配置
-- `backend/venv/`、`node_modules/`、`__pycache__/`：本地依赖或缓存
+## 🚀 快速开始
 
-## 主要 API
+### 前置要求
 
-| 路径 | 方法 | 用途 |
-| --- | --- | --- |
-| `/api/health` | GET | 健康检查 |
-| `/api/test-llm` | POST | 测试 LLM 连通性 |
-| `/api/extract-knowledge` | POST | 从文本块提取知识点 |
-| `/api/extract-knowledge-batch` | POST | 批量提取知识点 |
-| `/api/explain-deep` | POST | 流式生成深度讲解 |
-| `/api/rag/index` | POST | 为当前文档建立索引 |
-| `/api/rag/query` | POST | 当前文档检索问答 |
-| `/api/agent/chat` | POST | 学习 Agent 对话 |
-| `/api/agent/tools` | GET | 查看 Agent 工具 |
-| `/api/knowledge/click` | POST | 上报知识点点击 |
-| `/api/knowledge/mark-known` | POST | 标记已掌握 |
-| `/api/knowledge/unmark-known` | POST | 取消已掌握 |
-| `/api/knowledge/status-batch` | POST | 批量查询掌握状态 |
-| `/api/knowledge/stats` | GET | 查看掌握统计 |
-| `/api/knowledge/reset` | POST | 重置掌握记录 |
+- Node.js ≥ 18
+- Python ≥ 3.10
+- DeepSeek API Key（[去注册](https://platform.deepseek.com)）
 
-完整接口文档见 http://localhost:8000/docs。
+### Docker Compose 一键启动
 
-## 常用维护命令
-
-前端检查：
+如果你本机已安装 Docker，可以不单独配置 Node.js / Python 环境，直接用 Docker Compose 启动前后端：
 
 ```bash
-cd frontend
-npm run lint
-npm run build
+cp .env.example .env
 ```
 
-重置学习数据：
+编辑项目根目录的 `.env`，填入你的 `DEEPSEEK_API_KEY`：
+
+```env
+DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# 可选：启用 RAG 向量检索。未配置时自动回退关键词检索
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_MODEL=text-embedding-3-small
+
+FRONTEND_PORT=80
+ALLOWED_ORIGINS=http://localhost
+UVICORN_WORKERS=1
+```
+
+#### 生产模式
+
+生产模式只使用 `docker-compose.yml`，前端由 nginx 提供静态文件并反向代理 `/api/*` 到后端容器：
 
 ```bash
-curl -X POST http://localhost:8000/api/knowledge/reset
+docker compose -f docker-compose.yml up -d --build
 ```
 
-或停止服务后删除本地数据库文件：
+启动完成后访问：
+
+- 应用入口：http://localhost
+- 健康检查：http://localhost/api/health
+
+容器启动时会自动运行：
+
+- 后端：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
+- 前端：nginx 静态服务 + `/api/` 反向代理
+
+SQLite 数据库和 ChromaDB 向量库会持久化到 Docker volume `ai-study-tool_backend-data`。查看日志：
 
 ```bash
-rm backend/user_data.db
+docker compose -f docker-compose.yml logs -f
 ```
 
-查看容器状态：
+停止并保留数据：
 
 ```bash
-docker compose ps
+docker compose -f docker-compose.yml down
 ```
 
-## CI/CD 与部署
+如果要连同 Docker volume 中的数据一起清空：
 
-项目内置 GitHub Actions 工作流：
+```bash
+docker compose -f docker-compose.yml down -v
+```
 
-- `.github/workflows/ci.yml`：PR 或 push 到主分支时，检查前端安装、lint、build，并校验生产 Compose 可构建。
-- `.github/workflows/container-publish.yml`：push 到 `main` 或 `v*` tag 时构建前后端镜像，并发布到 GitHub Container Registry。
-- `.github/workflows/deploy.yml`：镜像发布后或手动触发时，通过 SSH 登录服务器并滚动更新容器。
+### 容器 CI/CD 自动化
 
-默认镜像：
+项目已补充 GitHub Actions 容器自动化流程：
+
+- `.github/workflows/ci.yml`：PR 或 push 到主分支时，执行前端 `npm ci`、`npm run lint`、`npm run build`，并校验生产 Docker Compose 可构建。
+- `.github/workflows/container-publish.yml`：push 到 `main` 或 `v*` tag 时，构建后端和前端镜像并推送到 GitHub Container Registry。
+- `.github/workflows/deploy.yml`：镜像发布成功后，或手动触发时，通过 SSH 登录服务器，拉取最新镜像并执行容器滚动更新。
+- `docker-compose.deploy.yml`：服务器部署专用 Compose 文件，只拉取镜像，不在服务器上从源码构建。
+
+默认镜像地址：
 
 ```text
 ghcr.io/54dongdaozhu/pagemind-backend:latest
 ghcr.io/54dongdaozhu/pagemind-frontend:latest
 ```
 
-启用自动部署需要在 GitHub Actions secrets/variables 中配置：
+要启用自动部署，需要在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中配置：
 
 ```text
-DEPLOY_HOST
-DEPLOY_USER
-DEPLOY_SSH_KEY
-DEPLOY_PATH
-DEPLOY_PORT
+DEPLOY_HOST       服务器地址
+DEPLOY_USER       SSH 用户名
+DEPLOY_SSH_KEY    SSH 私钥
+DEPLOY_PATH       服务器部署目录，例如 /opt/pagemind
+DEPLOY_PORT       SSH 端口，可选，默认 22
 
-DEEPSEEK_API_KEY
-DEEPSEEK_BASE_URL
-EMBEDDING_API_KEY
-EMBEDDING_BASE_URL
-EMBEDDING_MODEL
-ALLOWED_ORIGINS
-FRONTEND_PORT
-UVICORN_WORKERS
+DEEPSEEK_API_KEY  DeepSeek API Key
+DEEPSEEK_BASE_URL 可选，默认 https://api.deepseek.com
+EMBEDDING_API_KEY 可选
+EMBEDDING_BASE_URL 可选，默认 https://api.openai.com/v1
+EMBEDDING_MODEL   可选，默认 text-embedding-3-small
+ALLOWED_ORIGINS   可选，默认 http://localhost
+FRONTEND_PORT     可选，默认 80
+UVICORN_WORKERS   可选，默认 1
 
-GHCR_USERNAME
-GHCR_TOKEN
+GHCR_USERNAME     可选，私有镜像拉取时使用
+GHCR_TOKEN        可选，私有镜像拉取时使用，需要 packages:read 权限
 ```
 
 服务器首次准备：
@@ -346,32 +311,223 @@ sudo chown "$USER":"$USER" /opt/pagemind
 docker login ghcr.io
 ```
 
-如果 SSH 部署配置不完整，部署 workflow 会跳过服务器更新，但仍可保留镜像构建与发布结果。
+之后推送到 `main` 会自动构建并发布 `latest` 镜像，发布成功后触发部署。也可以在 GitHub Actions 的 `Deploy Containers` workflow 中手动选择 `image_tag` 部署指定版本，例如 `sha-xxxxxxx` 或 `v1.0.0`。
 
-## 设计取舍
+如果 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_PATH` 还没配齐，部署 workflow 会自动跳过 SSH 部署，只保留镜像构建与发布。
 
-- 本地优先：学习状态和向量索引默认保存在本地，适合单用户学习场景。
-- LLM 可替换：后端使用 OpenAI-compatible 调用方式，默认配置 DeepSeek。
-- RAG 可降级：未配置 embedding 时，文档问答回退到关键词检索。
-- 同名知识点共享状态：基于知识点文本记录掌握状态，便于跨文档复用。
-- 同一文档同名只高亮一次：降低重复高亮带来的阅读干扰。
+#### 开发模式
 
-## 已知限制
+直接运行 `docker compose up --build` 时，Docker Compose 会自动合并 `docker-compose.override.yml`，进入开发模式：
 
-- 扫描版 PDF 需要先 OCR，当前主要处理可提取文本的 PDF。
-- docx 中复杂公式暂未完整渲染，可能以普通文本形式展示。
-- 知识点质量依赖 LLM，可能出现遗漏、误判或粒度不一致。
-- 当前以单用户本地学习为主，暂未提供账号体系和多人协作能力。
+```bash
+docker compose up --build
+```
 
-## 路线图
+- 前端：http://localhost:5173
+- 后端 API：http://localhost:8000
+- 接口文档：http://localhost:8000/docs
+- 后端使用 `--reload`
+- 前端使用 Vite dev server，并通过 Vite proxy 转发 `/api/*`
 
-- [ ] 支持 KaTeX 公式渲染
-- [ ] 导出知识笔记到 Markdown
-- [ ] 增加知识点关联推荐
-- [ ] 加入间隔重复复习提醒
-- [ ] 提供多文档管理面板
-- [ ] 支持 PDF OCR 和复杂版式解析
+### 1. 克隆/进入项目
 
-## License
+```bash
+cd /path/to/ai-study-tool
+```
 
-MIT
+### 2. 配置后端
+
+```bash
+cd backend
+
+# 创建虚拟环境
+python3 -m venv venv
+source venv/bin/activate  # Mac/Linux
+# venv\Scripts\activate   # Windows
+
+# 安装依赖
+pip install -r requirements.txt
+```
+
+在 `backend/` 目录下创建 `.env` 文件：
+
+```
+DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# 可选：启用 RAG 向量检索。未配置时自动回退关键词检索
+EMBEDDING_API_KEY=你的_Embedding_API_Key
+EMBEDDING_BASE_URL=https://api.openai.com/v1
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+启动后端：
+
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+后端运行在 http://localhost:8000
+
+### 3. 配置前端
+
+打开新终端：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端运行在 http://localhost:5173
+
+### 4. 开始使用
+
+浏览器访问 http://localhost:5173 → 上传一份 docx、PDF、txt 或 Markdown 文档 → 等待知识点提取完成 → 开始阅读与整理
+
+## 📖 使用指南
+
+### 基础交互
+
+| 操作 | 效果 |
+|------|------|
+| 单击文档高亮 | 右侧显示 2-3 句简介 |
+| 双击文档高亮 | 右侧流式生成详细讲解 |
+| 单击右侧卡片 | 滚动到文档中对应位置 |
+| 双击右侧卡片 | 直接触发详细讲解 |
+| 点"标记已掌握" | 该知识点变绿+删除线，不再打扰 |
+| 切换"隐藏已掌握" | 已掌握的不显示高亮 |
+
+### 高亮颜色含义
+
+- 🟡 **黄色**：术语（未掌握）
+- 🟠 **橙色**：公式（未掌握）
+- 🟡 **浅黄/浅橙**：理解中（已点击 ≥ 3 次）
+- 🟢 **绿色 + 删除线**：已掌握
+
+## 🔌 主要 API
+
+| 路径 | 方法 | 用途 |
+|------|------|------|
+| `/api/extract-knowledge` | POST | 从文本块中提取知识点 |
+| `/api/rag/index` | POST | 接收完整文本并建立 RAG chunk 索引 |
+| `/api/rag/query` | POST | 检索当前文档并生成问答 |
+| `/api/agent/chat` | POST | 调用学习 Agent 进行对话 |
+| `/api/agent/tools` | GET | 查看 Agent 可用工具 |
+| `/api/explain-deep` | POST | 流式生成深度讲解 |
+| `/api/knowledge/click` | POST | 上报知识点点击 |
+| `/api/knowledge/mark-known` | POST | 标记为已掌握 |
+| `/api/knowledge/unmark-known` | POST | 取消已掌握 |
+| `/api/knowledge/status-batch` | POST | 批量查询掌握状态 |
+| `/api/knowledge/stats` | GET | 掌握情况统计 |
+| `/api/knowledge/reset` | POST | 重置所有掌握记录 |
+
+完整的接口文档可访问 http://localhost:8000/docs（FastAPI 自动生成的 Swagger UI）。
+
+## 💡 工作原理
+
+### 知识点提取流程
+
+```
+用户上传文档
+   ↓
+前端解析为 HTML
+   ↓
+按段落切分成文本块(每块约 800 字)
+   ↓
+LangGraph 三步流水线：召回提取 → 质量过滤 → 重要性分级
+   ↓
+前端用 TreeWalker API 在原文中精确定位并包裹 <mark> 标签
+   ↓
+绑定单击/双击事件
+```
+
+### 掌握状态机
+
+```
+unknown(未掌握,默认)
+   ↓ 点击 ≥ 3 次
+learning(理解中)
+   ↓ 用户点"标记已掌握"
+known(已掌握)
+   ↓ 用户点"取消"
+回到 unknown 或 learning
+```
+
+## 🎯 设计取舍
+
+- **同名知识点全局共享**：基于 `kp_text` 文本作为唯一键，跨文档同步掌握状态
+- **同一文档同名只高亮一次**：避免视觉污染
+- **缓存提取结果**：相同文本块不重复调 LLM，节省成本
+- **流式输出**：双击触发的详细讲解逐字呈现，提升体验
+- **本地优先**：所有数据存在本地 SQLite，无需注册账号
+
+## 💰 成本估算
+
+使用 DeepSeek API（约 ¥1/百万 tokens）：
+
+- 一份 20 页文档：提取约 ¥0.05-0.10
+- 一次详细讲解：约 ¥0.005
+- 月成本：轻度使用 ¥10 以内
+
+## 🚧 已知限制
+
+- docx 中的复杂公式（OOXML MathML）暂未渲染，公式以原始文本形式显示
+- PDF 当前以文本提取为主，扫描版 PDF 需要先 OCR 后再使用
+- 知识点提取质量依赖 LLM，偶有遗漏或误判
+- 单用户使用，未做账号体系
+
+## 🛣️ 后续规划
+
+- [ ] KaTeX 集成，支持数学公式渲染
+- [ ] 知识笔记导出（Markdown）
+- [ ] 知识点之间的关联推荐
+- [ ] 回看提醒（间隔重复算法）
+- [ ] 多文档管理面板
+- [ ] PDF OCR 与复杂版式支持
+
+## 📝 开发说明
+
+### 启动开发环境
+
+```bash
+# 终端 1: 后端
+cd backend
+source venv/bin/activate
+uvicorn main:app --reload --port 8000
+
+# 终端 2: 前端
+cd frontend
+npm run dev
+```
+
+### 重置掌握数据
+
+```bash
+# 方法 1: 删除数据库文件
+rm backend/user_data.db
+# 重启后端会自动重建
+
+# 方法 2: 调接口
+curl -X POST http://localhost:8000/api/knowledge/reset
+```
+
+### 调试技巧
+
+- 浏览器控制台查看知识点提取/匹配日志
+- 后端终端查看 LLM 请求与响应
+- 访问 http://localhost:8000/docs 直接测试 API
+
+## 📄 License
+
+仅供个人学习与研究使用。
+
+## 🙏 致谢
+
+- 模型服务：[DeepSeek](https://platform.deepseek.com)
+- docx 解析：[mammoth.js](https://github.com/mwilliamson/mammoth.js)
+- Web 框架：[FastAPI](https://fastapi.tiangolo.com) + [Vite](https://vitejs.dev) + [React](https://react.dev)
+
+---
+
+由 AI 辅助开发，作为 MVP 文档学习项目。
