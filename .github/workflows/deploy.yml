@@ -86,6 +86,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           envs: IMAGE_TAG,BACKEND_IMAGE,FRONTEND_IMAGE,DEEPSEEK_API_KEY,DEEPSEEK_BASE_URL,EMBEDDING_API_KEY,EMBEDDING_BASE_URL,EMBEDDING_MODEL,ALLOWED_ORIGINS,FRONTEND_PORT,UVICORN_WORKERS,GHCR_USERNAME,GHCR_TOKEN
+          command_timeout: 30m
           script: |
             set -eu
             cd "${{ secrets.DEPLOY_PATH }}"
