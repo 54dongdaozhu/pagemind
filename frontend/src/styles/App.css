@@ -588,7 +588,6 @@ body {
 
 .kp-panel-header {
   padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--panel-border);
   background: var(--panel-bg);
   display: flex;
   align-items: baseline;

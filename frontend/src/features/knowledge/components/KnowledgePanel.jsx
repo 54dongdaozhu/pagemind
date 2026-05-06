@@ -61,7 +61,6 @@ function KnowledgePanel({
           />
 
           <div className="kp-panel-header">
-            <span className="kp-panel-title">知识点</span>
             {!extracting && knowledgePoints.length > 0 && (
               <span className="kp-stats">
                 {stats.known} 掌握 · {stats.learning} 理解中 · {stats.unknown} 未掌握
