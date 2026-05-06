@@ -265,6 +265,56 @@ docker compose -f docker-compose.yml down
 docker compose -f docker-compose.yml down -v
 ```
 
+### 容器 CI/CD 自动化
+
+项目已补充 GitHub Actions 容器自动化流程：
+
+- `.github/workflows/ci.yml`：PR 或 push 到主分支时，执行前端 `npm ci`、`npm run lint`、`npm run build`，并校验生产 Docker Compose 可构建。
+- `.github/workflows/container-publish.yml`：push 到 `main` 或 `v*` tag 时，构建后端和前端镜像并推送到 GitHub Container Registry。
+- `.github/workflows/deploy.yml`：镜像发布成功后，或手动触发时，通过 SSH 登录服务器，拉取最新镜像并执行容器滚动更新。
+- `docker-compose.deploy.yml`：服务器部署专用 Compose 文件，只拉取镜像，不在服务器上从源码构建。
+
+默认镜像地址：
+
+```text
+ghcr.io/54dongdaozhu/pagemind-backend:latest
+ghcr.io/54dongdaozhu/pagemind-frontend:latest
+```
+
+要启用自动部署，需要在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中配置：
+
+```text
+DEPLOY_HOST       服务器地址
+DEPLOY_USER       SSH 用户名
+DEPLOY_SSH_KEY    SSH 私钥
+DEPLOY_PATH       服务器部署目录，例如 /opt/pagemind
+DEPLOY_PORT       SSH 端口，可选，默认 22
+
+DEEPSEEK_API_KEY  DeepSeek API Key
+DEEPSEEK_BASE_URL 可选，默认 https://api.deepseek.com
+EMBEDDING_API_KEY 可选
+EMBEDDING_BASE_URL 可选，默认 https://api.openai.com/v1
+EMBEDDING_MODEL   可选，默认 text-embedding-3-small
+ALLOWED_ORIGINS   可选，默认 http://localhost
+FRONTEND_PORT     可选，默认 80
+UVICORN_WORKERS   可选，默认 1
+
+GHCR_USERNAME     可选，私有镜像拉取时使用
+GHCR_TOKEN        可选，私有镜像拉取时使用，需要 packages:read 权限
+```
+
+服务器首次准备：
+
+```bash
+sudo mkdir -p /opt/pagemind
+sudo chown "$USER":"$USER" /opt/pagemind
+docker login ghcr.io
+```
+
+之后推送到 `main` 会自动构建并发布 `latest` 镜像，发布成功后触发部署。也可以在 GitHub Actions 的 `Deploy Containers` workflow 中手动选择 `image_tag` 部署指定版本，例如 `sha-xxxxxxx` 或 `v1.0.0`。
+
+如果 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_PATH` 还没配齐，部署 workflow 会自动跳过 SSH 部署，只保留镜像构建与发布。
+
 #### 开发模式
 
 直接运行 `docker compose up --build` 时，Docker Compose 会自动合并 `docker-compose.override.yml`，进入开发模式：
