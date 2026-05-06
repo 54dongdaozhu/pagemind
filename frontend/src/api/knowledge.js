@@ -6,6 +6,11 @@ export function extractKnowledge(text, chunkId) {
 }
 
 
+export function extractKnowledgeBatch(chunks) {
+  return postJson('/api/extract-knowledge-batch', { chunks })
+}
+
+
 export function fetchKnowledgeStatuses(kpTexts) {
   return postJson('/api/knowledge/status-batch', { kp_texts: kpTexts })
 }

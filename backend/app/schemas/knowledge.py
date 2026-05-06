@@ -56,6 +56,15 @@ class ExtractRequest(BaseModel):
     chunk_id: str
 
 
+class ExtractBatchItem(BaseModel):
+    text: str
+    chunk_id: str
+
+
+class ExtractBatchRequest(BaseModel):
+    chunks: List[ExtractBatchItem]
+
+
 class KnowledgePoint(BaseModel):
     text: str
     type: str
@@ -66,6 +75,10 @@ class KnowledgePoint(BaseModel):
 class ExtractResponse(BaseModel):
     chunk_id: str
     knowledge_points: List[KnowledgePoint]
+
+
+class ExtractBatchResponse(BaseModel):
+    results: List[ExtractResponse]
 
 
 class ExplainDeepRequest(BaseModel):

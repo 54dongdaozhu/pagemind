@@ -7,16 +7,22 @@ KnowledgeDiscoveryAgent -> KnowledgeFilterAgent -> KnowledgeRankAgent.
 """
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from threading import BoundedSemaphore, RLock
 
 from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items
+from app.core.config import EXTRACT_MAX_CONCURRENCY
 from app.core.database import get_db
-from app.schemas.knowledge import ExtractResponse, KnowledgePoint
+from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
 
 
 logger = logging.getLogger(__name__)
 
 _extract_cache = {}
+_extract_cache_lock = RLock()
+_extract_db_lock = RLock()
+_llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
 
 
 def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint]:
@@ -39,36 +45,57 @@ def _load_from_sqlite(chunk_id: str, text: str) -> list[KnowledgePoint] | None:
 def _save_to_sqlite(chunk_id: str, knowledge_points: list[KnowledgePoint]):
     now = datetime.utcnow().isoformat()
     result_json = json.dumps([kp.model_dump() for kp in knowledge_points], ensure_ascii=False)
-    with get_db() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO extract_cache (chunk_id, result_json, created_at) VALUES (?, ?, ?)",
-            (chunk_id, result_json, now),
-        )
-        conn.commit()
+    with _extract_db_lock:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO extract_cache (chunk_id, result_json, created_at) VALUES (?, ?, ?)",
+                (chunk_id, result_json, now),
+            )
+            conn.commit()
 
 
 def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
     text = text.strip()
 
-    if chunk_id in _extract_cache:
-        return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[chunk_id])
+    with _extract_cache_lock:
+        if chunk_id in _extract_cache:
+            return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[chunk_id])
 
     cached = _load_from_sqlite(chunk_id, text)
     if cached is not None:
-        _extract_cache[chunk_id] = cached
+        with _extract_cache_lock:
+            _extract_cache[chunk_id] = cached
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached)
 
     if len(text) < 30:
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=[])
 
     try:
-        kps_data = discover_knowledge_points(text)
+        with _llm_slots:
+            kps_data = discover_knowledge_points(text)
         knowledge_points = _to_knowledge_points(kps_data, text)
     except Exception as e:
         logger.exception("Knowledge agent extraction failed: %s", e)
         knowledge_points = []
 
-    _extract_cache[chunk_id] = knowledge_points
+    with _extract_cache_lock:
+        _extract_cache[chunk_id] = knowledge_points
     _save_to_sqlite(chunk_id, knowledge_points)
 
     return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
+
+
+def extract_knowledge_batch(chunks: list[ExtractBatchItem]) -> ExtractBatchResponse:
+    if not chunks:
+        return ExtractBatchResponse(results=[])
+
+    max_workers = min(EXTRACT_MAX_CONCURRENCY, len(chunks))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(
+            executor.map(
+                lambda chunk: extract_knowledge_from_text(chunk.chunk_id, chunk.text),
+                chunks,
+            )
+        )
+
+    return ExtractBatchResponse(results=results)
