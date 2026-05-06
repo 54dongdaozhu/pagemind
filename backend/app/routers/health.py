@@ -12,6 +12,11 @@ def root():
     return {"status": "ok", "message": "AI 文档学习助手后端运行中"}
 
 
+@router.get("/api/health")
+def health_check():
+    return {"status": "ok"}
+
+
 @router.post("/api/test-llm", response_model=ChatResponse)
 def test_llm(request: ChatRequest):
     messages = [{"role": "user", "content": request.message}]

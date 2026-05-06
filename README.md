@@ -223,48 +223,61 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 EMBEDDING_API_KEY=
 EMBEDDING_BASE_URL=https://api.openai.com/v1
 EMBEDDING_MODEL=text-embedding-3-small
+
+FRONTEND_PORT=80
+ALLOWED_ORIGINS=http://localhost
+UVICORN_WORKERS=1
 ```
 
-然后启动：
+#### 生产模式
+
+生产模式只使用 `docker-compose.yml`，前端由 nginx 提供静态文件并反向代理 `/api/*` 到后端容器：
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml up -d --build
 ```
 
 启动完成后访问：
 
-- 前端：http://localhost:5173
-- 后端 API：http://localhost:8000
-- 接口文档：http://localhost:8000/docs
+- 应用入口：http://localhost
+- 健康检查：http://localhost/api/health
 
 容器启动时会自动运行：
 
-- 后端：`uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
-- 前端：`npm run dev -- --host 0.0.0.0`
+- 后端：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
+- 前端：nginx 静态服务 + `/api/` 反向代理
 
-SQLite 数据库和 ChromaDB 向量库会持久化到 Docker volume `ai-study-tool_backend-data`，前端依赖会放在 `frontend-node-modules` volume 中。停止服务按 `Ctrl+C`，后台启动可使用：
-
-```bash
-docker compose up -d --build
-```
-
-查看日志：
+SQLite 数据库和 ChromaDB 向量库会持久化到 Docker volume `ai-study-tool_backend-data`。查看日志：
 
 ```bash
-docker compose logs -f
+docker compose -f docker-compose.yml logs -f
 ```
 
 停止并保留数据：
 
 ```bash
-docker compose down
+docker compose -f docker-compose.yml down
 ```
 
 如果要连同 Docker volume 中的数据一起清空：
 
 ```bash
-docker compose down -v
+docker compose -f docker-compose.yml down -v
 ```
+
+#### 开发模式
+
+直接运行 `docker compose up --build` 时，Docker Compose 会自动合并 `docker-compose.override.yml`，进入开发模式：
+
+```bash
+docker compose up --build
+```
+
+- 前端：http://localhost:5173
+- 后端 API：http://localhost:8000
+- 接口文档：http://localhost:8000/docs
+- 后端使用 `--reload`
+- 前端使用 Vite dev server，并通过 Vite proxy 转发 `/api/*`
 
 ### 1. 克隆/进入项目
 
