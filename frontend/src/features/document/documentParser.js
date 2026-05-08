@@ -1,6 +1,18 @@
 import mammoth from 'mammoth'
 
 const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md']
+const DOCX_STYLE_MAP = [
+  "p[style-name='Title'] => h1:fresh",
+  "p[style-name='标题'] => h1:fresh",
+  "p[style-name='一级标题'] => h1:fresh",
+  "p[style-name='二级标题'] => h2:fresh",
+  "p[style-name='三级标题'] => h3:fresh",
+  "p[style-name='四级标题'] => h4:fresh",
+  "p[style-name='五级标题'] => h4:fresh",
+  "p[style-name='六级标题'] => h4:fresh",
+  "p[style-name='半括号标题（五级）'] => h4:fresh",
+  "p[style-name='圆括号标题（六级标题）'] => h4:fresh",
+]
 
 export const ACCEPTED_DOCUMENT_TYPES = SUPPORTED_EXTENSIONS.join(',')
 export const SUPPORTED_DOCUMENT_LABEL = SUPPORTED_EXTENSIONS.join('、')
@@ -120,7 +132,7 @@ function markdownToHtml(markdown) {
 
 async function parseDocx(file) {
   const arrayBuffer = await file.arrayBuffer()
-  const result = await mammoth.convertToHtml({ arrayBuffer })
+  const result = await mammoth.convertToHtml({ arrayBuffer }, { styleMap: DOCX_STYLE_MAP })
   return result.value
 }
 
