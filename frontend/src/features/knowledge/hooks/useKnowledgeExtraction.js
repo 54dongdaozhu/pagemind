@@ -11,6 +11,7 @@ const EXTRACTION_CONCURRENCY = 3
 export function useKnowledgeExtraction() {
   const [knowledgePoints, setKnowledgePoints] = useState([])
   const [extractProgress, setExtractProgress] = useState({ done: 0, total: 0 })
+  const [extractError, setExtractError] = useState('')
   const [extracting, setExtracting] = useState(false)
   const extractingRef = useRef(false)
   const extractionRunRef = useRef(0)
@@ -19,6 +20,7 @@ export function useKnowledgeExtraction() {
     extractionRunRef.current += 1
     setKnowledgePoints([])
     setExtractProgress({ done: 0, total: 0 })
+    setExtractError('')
     setExtracting(false)
     extractingRef.current = false
   }, [])
@@ -29,6 +31,7 @@ export function useKnowledgeExtraction() {
     const runId = extractionRunRef.current + 1
     extractionRunRef.current = runId
     setExtracting(true)
+    setExtractError('')
     const chunks = splitIntoChunks(html)
     setExtractProgress({ done: 0, total: chunks.length })
     const allKPs = []
@@ -49,7 +52,7 @@ export function useKnowledgeExtraction() {
 
         try {
           const data = await extractKnowledge(text, chunkId)
-          const kpsWithMeta = data.knowledge_points.map(kp => ({
+          const kpsWithMeta = (data.knowledge_points || []).map(kp => ({
             ...kp,
             chunkIndex: i,
             id: hashString(kp.text + i),
@@ -60,6 +63,9 @@ export function useKnowledgeExtraction() {
           }
         } catch (err) {
           console.error(`块 ${i} 提取出错:`, err)
+          if (extractionRunRef.current === runId) {
+            setExtractError('知识点接口暂时不可用，请确认后端服务已启动并可访问。')
+          }
         } finally {
           completed += 1
           if (extractionRunRef.current === runId) {
@@ -93,6 +99,7 @@ export function useKnowledgeExtraction() {
   return {
     extracting,
     extractProgress,
+    extractError,
     uniqueKPs,
     extractAllChunks,
     resetExtraction,

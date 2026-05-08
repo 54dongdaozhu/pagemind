@@ -16,7 +16,7 @@ EXTRACT_MAX_CONCURRENCY = max(1, int(os.getenv("EXTRACT_MAX_CONCURRENCY", "3")))
 DATA_DIR = Path(os.getenv("DATA_DIR", BACKEND_DIR))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg2://pagemind:pagemind@localhost:5432/pagemind",
+    f"sqlite:///{BACKEND_DIR / 'user_data.db'}",
 )
 CHROMA_PATH = DATA_DIR / "chroma_store"
 ALLOWED_ORIGINS = [

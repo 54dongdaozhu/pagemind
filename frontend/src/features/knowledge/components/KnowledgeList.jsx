@@ -1,6 +1,8 @@
 function KnowledgeList({
   docLoaded,
   extracting,
+  extractProgress,
+  extractError,
   knowledgePoints,
   selectedKP,
   getKpStatus,
@@ -10,6 +12,15 @@ function KnowledgeList({
   return (
     <div className="kp-list">
       {!docLoaded && <p className="placeholder">上传文档后将自动提取知识点</p>}
+      {docLoaded && extractError && knowledgePoints.length === 0 && (
+        <p className="placeholder">{extractError}</p>
+      )}
+      {docLoaded && extracting && knowledgePoints.length === 0 && !extractError && (
+        <p className="placeholder">
+          正在提取知识点
+          {extractProgress.total > 0 ? `（${extractProgress.done}/${extractProgress.total}）` : ''}
+        </p>
+      )}
       {docLoaded && knowledgePoints.length === 0 && !extracting && (
         <p className="placeholder">暂无提取到的知识点</p>
       )}

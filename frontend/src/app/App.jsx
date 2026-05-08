@@ -36,6 +36,7 @@ function App() {
   const {
     extracting,
     extractProgress,
+    extractError,
     uniqueKPs,
     extractAllChunks,
     resetExtraction,
@@ -260,6 +261,8 @@ function App() {
         deepLoading={deepLoading}
         deepExplanation={deepExplanation}
         extracting={extracting}
+        extractProgress={extractProgress}
+        extractError={extractError}
         docLoaded={docLoaded}
         docId={currentDocId}
         knowledgePoints={uniqueKPs}

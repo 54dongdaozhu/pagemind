@@ -11,6 +11,8 @@ function KnowledgePanel({
   deepLoading,
   deepExplanation,
   extracting,
+  extractProgress,
+  extractError,
   docLoaded,
   docId,
   knowledgePoints,
@@ -71,6 +73,8 @@ function KnowledgePanel({
           <KnowledgeList
             docLoaded={docLoaded}
             extracting={extracting}
+            extractProgress={extractProgress}
+            extractError={extractError}
             knowledgePoints={knowledgePoints}
             selectedKP={selectedKP}
             getKpStatus={getKpStatus}
