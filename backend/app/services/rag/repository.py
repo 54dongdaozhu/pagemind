@@ -1,7 +1,9 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
-from app.core.database import get_db
+from sqlalchemy import delete, select
+
+from app.core.database import RagChunk, RagDocument, get_db
 
 
 def save_indexed_document(
@@ -11,58 +13,61 @@ def save_indexed_document(
     summary: str,
     title: str | None = None,
 ) -> None:
-    now = datetime.utcnow().isoformat()
-    with get_db() as conn:
-        conn.execute("DELETE FROM rag_chunks WHERE doc_id = ?", (doc_id,))
-        conn.executemany(
-            """
-            INSERT INTO rag_chunks (doc_id, chunk_index, content, embedding_json, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
+    now = datetime.now(timezone.utc)
+    with get_db() as db:
+        db.execute(delete(RagChunk).where(RagChunk.doc_id == doc_id))
+        db.add_all(
             [
-                (
-                    doc_id,
-                    idx,
-                    content,
-                    json.dumps(embeddings[idx]) if embeddings and idx < len(embeddings) else None,
-                    now,
+                RagChunk(
+                    doc_id=doc_id,
+                    chunk_index=idx,
+                    content=content,
+                    embedding_json=json.dumps(embeddings[idx]) if embeddings and idx < len(embeddings) else None,
+                    created_at=now,
                 )
                 for idx, content in enumerate(chunks)
-            ],
+            ]
         )
-        conn.execute(
-            """
-            INSERT INTO rag_documents
-                (doc_id, title, summary, chunk_count, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(doc_id) DO UPDATE SET
-                title = excluded.title,
-                summary = excluded.summary,
-                chunk_count = excluded.chunk_count,
-                updated_at = excluded.updated_at
-            """,
-            (doc_id, title, summary, len(chunks), now, now),
-        )
-        conn.commit()
+
+        document = db.get(RagDocument, doc_id)
+        if document is None:
+            db.add(
+                RagDocument(
+                    doc_id=doc_id,
+                    title=title,
+                    summary=summary,
+                    chunk_count=len(chunks),
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            document.title = title
+            document.summary = summary
+            document.chunk_count = len(chunks)
+            document.updated_at = now
+
+        db.commit()
 
 
 def get_document_summary(doc_id: str) -> str:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT summary FROM rag_documents WHERE doc_id = ?",
-            (doc_id,),
-        ).fetchone()
-    return row["summary"] if row else ""
+    with get_db() as db:
+        document = db.get(RagDocument, doc_id)
+    return document.summary if document else ""
 
 
 def list_document_chunks(doc_id: str):
-    with get_db() as conn:
-        return conn.execute(
-            """
-            SELECT chunk_index, content, embedding_json
-            FROM rag_chunks
-            WHERE doc_id = ?
-            ORDER BY chunk_index ASC
-            """,
-            (doc_id,),
-        ).fetchall()
+    with get_db() as db:
+        chunks = db.execute(
+            select(RagChunk)
+            .where(RagChunk.doc_id == doc_id)
+            .order_by(RagChunk.chunk_index.asc())
+        ).scalars()
+        return [
+            {
+                "chunk_index": chunk.chunk_index,
+                "content": chunk.content,
+                "embedding_json": chunk.embedding_json,
+            }
+            for chunk in chunks
+        ]

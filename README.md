@@ -24,7 +24,7 @@
 
 ### 后端
 - **Python 3.10+** + **FastAPI**：Web 框架
-- **SQLite**：用户知识掌握记录存储
+- **PostgreSQL + SQLAlchemy**：生产级关系数据库与 ORM 持久化
 - **DeepSeek API**：大语言模型服务
 - **LangGraph + LangChain**：多步知识点提取流水线
 - **Embedding RAG + ChromaDB**：当前文档向量检索与摘要记忆
@@ -64,7 +64,7 @@ flowchart LR
         RAG --> Chunk[文本切块]
         Chunk --> Embedding[Embedding API]
         Embedding --> Chroma[ChromaDB 向量库]
-        Knowledge --> SQLite[(SQLite 本地数据库)]
+        Knowledge --> Postgres[(PostgreSQL)]
     end
 
     Frontend --> API
@@ -75,7 +75,7 @@ flowchart LR
 - **前端层**：基于 React 19 + Vite，负责文档上传、文档解析、HTML 渲染、原文高亮和用户交互。
 - **后端服务层**：基于 FastAPI，提供知识点提取、知识点讲解、RAG 文档问答、学习状态管理等接口。
 - **AI 能力层**：通过 LangGraph 将知识点提取拆分为多步流程，并统一调用 OpenAI-compatible LLM 服务。
-- **存储层**：使用 ChromaDB 存储文档向量索引，使用 SQLite 保存知识点和掌握状态等轻量数据。
+- **存储层**：使用 ChromaDB 存储文档向量索引，使用 PostgreSQL 保存知识点、提取缓存和文档索引元数据。
 
 ---
 
@@ -90,7 +90,7 @@ sequenceDiagram
     participant BE as FastAPI 后端
     participant LG as LangGraph 提取流水线
     participant LLM as LLM 服务
-    participant DB as SQLite
+    participant DB as PostgreSQL
     participant VS as ChromaDB
 
     U->>FE: 上传文档
@@ -111,7 +111,7 @@ sequenceDiagram
     BE->>VS: 写入 ChromaDB 向量索引
 
     FE->>BE: 查询/更新掌握状态
-    BE->>DB: 读写 SQLite
+    BE->>DB: 通过 SQLAlchemy 读写 PostgreSQL
 
     U->>FE: 点击/双击知识点
     FE->>BE: 请求简介或深度讲解
@@ -127,7 +127,7 @@ sequenceDiagram
 4. 前端使用 TreeWalker 在原文中定位知识点并进行高亮展示。
 5. 后端将文档切块、生成 Embedding，并写入 ChromaDB，用于后续 RAG 文档问答。
 6. 用户点击或双击知识点时，前端请求后端生成简介或深度讲解。
-7. 用户的掌握状态通过 FastAPI 写入 SQLite，避免前端直接操作数据库。
+7. 用户的掌握状态通过 FastAPI 和 SQLAlchemy 写入 PostgreSQL，避免前端直接操作数据库。
 
 ## 🎬 Demo 演示
 
@@ -169,7 +169,7 @@ ai-study-tool/
 │   │   ├── main.py                 # FastAPI 创建、CORS、路由注册
 │   │   ├── core/
 │   │   │   ├── config.py           # 环境变量、API Key、CORS 配置
-│   │   │   └── database.py         # SQLite 初始化与连接
+│   │   │   └── database.py         # SQLAlchemy 模型、PostgreSQL 连接与初始化
 │   │   ├── routers/                # HTTP API 路由
 │   │   │   ├── health.py           # 健康检查与 LLM 连通性测试
 │   │   │   ├── extract.py          # 知识点提取接口
@@ -187,7 +187,6 @@ ai-study-tool/
 │   │   ├── schemas/                # Pydantic 请求/响应模型
 │   │   └── models/                 # 领域常量与数据模型
 │   ├── chroma_store/               # ChromaDB 本地向量库（运行生成）
-│   ├── user_data.db                # SQLite 本地数据（运行生成）
 │   ├── .env                        # 本地密钥配置（不提交）
 │   └── venv/                       # Python 虚拟环境（不提交）
 ├── test-docs/                      # 本地测试文档样例
@@ -195,7 +194,7 @@ ai-study-tool/
 └── README.md
 ```
 
-> 说明：`venv/`、`.env`、`user_data.db`、`chroma_store/`、`__pycache__/` 等均为本地运行产物或敏感配置，应保持在 `.gitignore` 中，不作为源码提交。
+> 说明：`venv/`、`.env`、`chroma_store/`、`__pycache__/` 等均为本地运行产物或敏感配置，应保持在 `.gitignore` 中，不作为源码提交。
 
 ## 🚀 快速开始
 
@@ -224,6 +223,11 @@ EMBEDDING_API_KEY=
 EMBEDDING_BASE_URL=https://api.openai.com/v1
 EMBEDDING_MODEL=text-embedding-3-small
 
+# PostgreSQL
+POSTGRES_DB=pagemind
+POSTGRES_USER=pagemind
+POSTGRES_PASSWORD=请改成强密码
+
 FRONTEND_PORT=80
 ALLOWED_ORIGINS=http://localhost
 UVICORN_WORKERS=1
@@ -247,7 +251,7 @@ docker compose -f docker-compose.yml up -d --build
 - 后端：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
 - 前端：nginx 静态服务 + `/api/` 反向代理
 
-SQLite 数据库和 ChromaDB 向量库会持久化到 Docker volume `ai-study-tool_backend-data`。查看日志：
+PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，ChromaDB 向量库会持久化到 `ai-study-tool_backend-data`。查看日志：
 
 ```bash
 docker compose -f docker-compose.yml logs -f
@@ -298,6 +302,9 @@ EMBEDDING_MODEL   可选，默认 text-embedding-3-small
 ALLOWED_ORIGINS   可选，默认 http://localhost
 FRONTEND_PORT     可选，默认 80
 UVICORN_WORKERS   可选，默认 1
+POSTGRES_DB       可选，默认 pagemind
+POSTGRES_USER     可选，默认 pagemind
+POSTGRES_PASSWORD PostgreSQL 密码，生产环境请使用强密码
 
 GHCR_USERNAME     可选，私有镜像拉取时使用
 GHCR_TOKEN        可选，私有镜像拉取时使用，需要 packages:read 权限
@@ -354,6 +361,8 @@ pip install -r requirements.txt
 ```
 DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+DATABASE_URL=postgresql+psycopg2://pagemind:请改成强密码@localhost:5432/pagemind
 
 # 可选：启用 RAG 向量检索。未配置时自动回退关键词检索
 EMBEDDING_API_KEY=你的_Embedding_API_Key
@@ -460,7 +469,7 @@ known(已掌握)
 - **同一文档同名只高亮一次**：避免视觉污染
 - **缓存提取结果**：相同文本块不重复调 LLM，节省成本
 - **流式输出**：双击触发的详细讲解逐字呈现，提升体验
-- **本地优先**：所有数据存在本地 SQLite，无需注册账号
+- **服务端持久化**：学习状态、提取缓存和文档元数据保存在 PostgreSQL，适合容器化部署和生产环境备份
 
 ## 💰 成本估算
 
@@ -504,9 +513,9 @@ npm run dev
 ### 重置掌握数据
 
 ```bash
-# 方法 1: 删除数据库文件
-rm backend/user_data.db
-# 重启后端会自动重建
+# 方法 1: 清空 Docker Compose 数据卷
+docker compose down -v
+# 重启后会自动重建表结构
 
 # 方法 2: 调接口
 curl -X POST http://localhost:8000/api/knowledge/reset

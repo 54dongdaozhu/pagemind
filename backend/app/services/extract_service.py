@@ -8,12 +8,12 @@ KnowledgeDiscoveryAgent -> KnowledgeFilterAgent -> KnowledgeRankAgent.
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import BoundedSemaphore, RLock
 
 from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items
 from app.core.config import EXTRACT_MAX_CONCURRENCY
-from app.core.database import get_db
+from app.core.database import ExtractCache, get_db
 from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
 
 
@@ -30,28 +30,27 @@ def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint
     return [KnowledgePoint(**kp) for kp in finalized]
 
 
-def _load_from_sqlite(chunk_id: str, text: str) -> list[KnowledgePoint] | None:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT result_json FROM extract_cache WHERE chunk_id = ?",
-            (chunk_id,),
-        ).fetchone()
-    if row is None:
+def _load_from_cache(chunk_id: str, text: str) -> list[KnowledgePoint] | None:
+    with get_db() as db:
+        cache = db.get(ExtractCache, chunk_id)
+    if cache is None:
         return None
-    data = json.loads(row["result_json"])
+    data = json.loads(cache.result_json)
     return _to_knowledge_points(data, text)
 
 
-def _save_to_sqlite(chunk_id: str, knowledge_points: list[KnowledgePoint]):
-    now = datetime.utcnow().isoformat()
+def _save_to_cache(chunk_id: str, knowledge_points: list[KnowledgePoint]):
+    now = datetime.now(timezone.utc)
     result_json = json.dumps([kp.model_dump() for kp in knowledge_points], ensure_ascii=False)
     with _extract_db_lock:
-        with get_db() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO extract_cache (chunk_id, result_json, created_at) VALUES (?, ?, ?)",
-                (chunk_id, result_json, now),
-            )
-            conn.commit()
+        with get_db() as db:
+            cache = db.get(ExtractCache, chunk_id)
+            if cache is None:
+                db.add(ExtractCache(chunk_id=chunk_id, result_json=result_json, created_at=now))
+            else:
+                cache.result_json = result_json
+                cache.created_at = now
+            db.commit()
 
 
 def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
@@ -61,7 +60,7 @@ def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
         if chunk_id in _extract_cache:
             return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[chunk_id])
 
-    cached = _load_from_sqlite(chunk_id, text)
+    cached = _load_from_cache(chunk_id, text)
     if cached is not None:
         with _extract_cache_lock:
             _extract_cache[chunk_id] = cached
@@ -80,7 +79,7 @@ def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
 
     with _extract_cache_lock:
         _extract_cache[chunk_id] = knowledge_points
-    _save_to_sqlite(chunk_id, knowledge_points)
+    _save_to_cache(chunk_id, knowledge_points)
 
     return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
 

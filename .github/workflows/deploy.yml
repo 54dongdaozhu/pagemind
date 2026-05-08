@@ -78,6 +78,9 @@ jobs:
           ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
           FRONTEND_PORT: ${{ secrets.FRONTEND_PORT }}
           UVICORN_WORKERS: ${{ secrets.UVICORN_WORKERS }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         with:
@@ -85,7 +88,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          envs: IMAGE_TAG,BACKEND_IMAGE,FRONTEND_IMAGE,DEEPSEEK_API_KEY,DEEPSEEK_BASE_URL,EMBEDDING_API_KEY,EMBEDDING_BASE_URL,EMBEDDING_MODEL,ALLOWED_ORIGINS,FRONTEND_PORT,UVICORN_WORKERS,GHCR_USERNAME,GHCR_TOKEN
+          envs: IMAGE_TAG,BACKEND_IMAGE,FRONTEND_IMAGE,DEEPSEEK_API_KEY,DEEPSEEK_BASE_URL,EMBEDDING_API_KEY,EMBEDDING_BASE_URL,EMBEDDING_MODEL,ALLOWED_ORIGINS,FRONTEND_PORT,UVICORN_WORKERS,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,GHCR_USERNAME,GHCR_TOKEN
           command_timeout: 30m
           script: |
             set -eu
@@ -103,6 +106,9 @@ jobs:
             ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost}
             FRONTEND_PORT=${FRONTEND_PORT:-80}
             UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+            POSTGRES_DB=${POSTGRES_DB:-pagemind}
+            POSTGRES_USER=${POSTGRES_USER:-pagemind}
+            POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pagemind}
             EOF
 
             if [ -n "${GHCR_TOKEN:-}" ]; then

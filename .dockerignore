@@ -8,6 +8,5 @@
 **/.venv
 **/node_modules
 **/dist
-backend/user_data.db
 backend/chroma_store
 test-docs

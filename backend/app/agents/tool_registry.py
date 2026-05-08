@@ -160,7 +160,7 @@ TOOL_REGISTRY: dict[str, AgentTool] = {
             "known": {"type": "integer", "description": "已掌握数量。"},
         },
         when_to_use="生成学习进度概览、复盘或下一步建议时使用。",
-        constraints=["只反映本地 SQLite 中已有记录。"],
+        constraints=["只反映 PostgreSQL 中已有记录。"],
         function=tools.get_learning_stats,
     ),
     "explain_knowledge_with_context": AgentTool(

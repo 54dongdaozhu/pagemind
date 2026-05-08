@@ -1,71 +1,67 @@
-import sqlite3
 from contextlib import contextmanager
 
-from app.core.config import DB_PATH
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+from app.core.config import DATABASE_URL
+
+
+Base = declarative_base()
+
+
+class UserKnowledge(Base):
+    __tablename__ = "user_knowledge"
+
+    kp_text = Column(Text, primary_key=True)
+    kp_type = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False, default="unknown")
+    click_count = Column(Integer, nullable=False, default=0)
+    last_clicked_at = Column(DateTime(timezone=True))
+    marked_known_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class ExtractCache(Base):
+    __tablename__ = "extract_cache"
+
+    chunk_id = Column(Text, primary_key=True)
+    result_json = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class RagChunk(Base):
+    __tablename__ = "rag_chunks"
+
+    doc_id = Column(Text, primary_key=True)
+    chunk_index = Column(Integer, primary_key=True)
+    content = Column(Text, nullable=False)
+    embedding_json = Column(Text)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class RagDocument(Base):
+    __tablename__ = "rag_documents"
+
+    doc_id = Column(Text, primary_key=True)
+    title = Column(Text)
+    summary = Column(Text, nullable=False)
+    chunk_count = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    session = SessionLocal()
     try:
-        yield conn
+        yield session
     finally:
-        conn.close()
+        session.close()
 
 
 def init_db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS user_knowledge (
-                kp_text TEXT PRIMARY KEY,
-                kp_type TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'unknown',
-                click_count INTEGER NOT NULL DEFAULT 0,
-                last_clicked_at TEXT,
-                marked_known_at TEXT,
-                created_at TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS extract_cache (
-                chunk_id TEXT PRIMARY KEY,
-                result_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS rag_chunks (
-                doc_id TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                embedding_json TEXT,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (doc_id, chunk_index)
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc_id
-            ON rag_chunks(doc_id)
-        """)
-        _ensure_column(conn, "rag_chunks", "embedding_json", "TEXT")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS rag_documents (
-                doc_id TEXT PRIMARY KEY,
-                title TEXT,
-                summary TEXT NOT NULL,
-                chunk_count INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-        conn.commit()
-
-
-def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str):
-    columns = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    if any(row["name"] == column_name for row in columns):
-        return
-    conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+    Base.metadata.create_all(bind=engine)

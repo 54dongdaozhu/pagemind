@@ -1,10 +1,30 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pagemind}
+      POSTGRES_USER: ${POSTGRES_USER:-pagemind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pagemind}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-pagemind}\" -d \"${POSTGRES_DB:-pagemind}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/54dongdaozhu/pagemind-backend}:${IMAGE_TAG:-latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
     expose:
       - "8000"
     environment:
       DATA_DIR: /data
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-pagemind}:${POSTGRES_PASSWORD:-pagemind}@postgres:5432/${POSTGRES_DB:-pagemind}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
@@ -39,3 +59,4 @@ services:
 
 volumes:
   backend-data:
+  postgres-data:
