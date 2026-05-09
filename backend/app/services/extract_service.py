@@ -30,40 +30,45 @@ def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint
     return [KnowledgePoint(**kp) for kp in finalized]
 
 
-def _load_from_cache(chunk_id: str, text: str) -> list[KnowledgePoint] | None:
+def _scoped_chunk_id(user_id: str, chunk_id: str) -> str:
+    return f"user:{user_id}:chunk:{chunk_id}"
+
+
+def _load_from_cache(cache_key: str, text: str) -> list[KnowledgePoint] | None:
     with get_db() as db:
-        cache = db.get(ExtractCache, chunk_id)
+        cache = db.get(ExtractCache, cache_key)
     if cache is None:
         return None
     data = json.loads(cache.result_json)
     return _to_knowledge_points(data, text)
 
 
-def _save_to_cache(chunk_id: str, knowledge_points: list[KnowledgePoint]):
+def _save_to_cache(cache_key: str, knowledge_points: list[KnowledgePoint]):
     now = datetime.now(timezone.utc)
     result_json = json.dumps([kp.model_dump() for kp in knowledge_points], ensure_ascii=False)
     with _extract_db_lock:
         with get_db() as db:
-            cache = db.get(ExtractCache, chunk_id)
+            cache = db.get(ExtractCache, cache_key)
             if cache is None:
-                db.add(ExtractCache(chunk_id=chunk_id, result_json=result_json, created_at=now))
+                db.add(ExtractCache(chunk_id=cache_key, result_json=result_json, created_at=now))
             else:
                 cache.result_json = result_json
                 cache.created_at = now
             db.commit()
 
 
-def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
+def extract_knowledge_from_text(user_id: str, chunk_id: str, text: str) -> ExtractResponse:
     text = text.strip()
+    cache_key = _scoped_chunk_id(user_id, chunk_id)
 
     with _extract_cache_lock:
-        if chunk_id in _extract_cache:
-            return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[chunk_id])
+        if cache_key in _extract_cache:
+            return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[cache_key])
 
-    cached = _load_from_cache(chunk_id, text)
+    cached = _load_from_cache(cache_key, text)
     if cached is not None:
         with _extract_cache_lock:
-            _extract_cache[chunk_id] = cached
+            _extract_cache[cache_key] = cached
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached)
 
     if len(text) < 30:
@@ -78,13 +83,13 @@ def extract_knowledge_from_text(chunk_id: str, text: str) -> ExtractResponse:
         knowledge_points = []
 
     with _extract_cache_lock:
-        _extract_cache[chunk_id] = knowledge_points
-    _save_to_cache(chunk_id, knowledge_points)
+        _extract_cache[cache_key] = knowledge_points
+    _save_to_cache(cache_key, knowledge_points)
 
     return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
 
 
-def extract_knowledge_batch(chunks: list[ExtractBatchItem]) -> ExtractBatchResponse:
+def extract_knowledge_batch(user_id: str, chunks: list[ExtractBatchItem]) -> ExtractBatchResponse:
     if not chunks:
         return ExtractBatchResponse(results=[])
 
@@ -92,7 +97,7 @@ def extract_knowledge_batch(chunks: list[ExtractBatchItem]) -> ExtractBatchRespo
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(
             executor.map(
-                lambda chunk: extract_knowledge_from_text(chunk.chunk_id, chunk.text),
+                lambda chunk: extract_knowledge_from_text(user_id, chunk.chunk_id, chunk.text),
                 chunks,
             )
         )

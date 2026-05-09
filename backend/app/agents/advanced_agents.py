@@ -59,7 +59,7 @@ def relation_mapping_agent(state: LearningAgentState) -> dict:
 
 def reflection_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
-    stats = call_tool("get_learning_stats")
+    stats = call_tool("get_learning_stats", user_id=state["user_id"])
     result = call_tool("schedule_review", context=context, learning_stats=stats, knowledge_status=[])
     return {
         "answer": _format_review_answer(result),

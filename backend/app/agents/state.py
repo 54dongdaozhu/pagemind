@@ -28,6 +28,7 @@ Intent = Literal[
 
 
 class LearningAgentState(TypedDict):
+    user_id: str
     doc_id: str | None
     message: str
     intent: Intent

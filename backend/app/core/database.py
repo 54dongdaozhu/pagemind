@@ -11,6 +11,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -24,8 +26,9 @@ class User(Base):
     __tablename__ = "users"
 
     user_id = Column(String(64), primary_key=True)
-    username = Column(String(128))
+    username = Column(String(128), unique=True)
     email = Column(String(255), unique=True)
+    password_hash = Column(String(255))
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
@@ -263,3 +266,15 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    migrate_db()
+
+
+def migrate_db():
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    with engine.begin() as connection:
+        if "password_hash" not in user_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"))

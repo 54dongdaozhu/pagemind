@@ -8,6 +8,7 @@ from app.services.rag.repository import (
     get_document_summary,
     list_document_chunks,
     save_indexed_document,
+    scoped_doc_id,
 )
 from app.services.rag.vector_store import index_chunks_in_chroma, retrieve_by_chroma
 
@@ -32,6 +33,7 @@ SUMMARY_SYSTEM_PROMPT = """你是一个文档整理助手。请为文档 RAG 问
 
 
 def index_document_text(
+    user_id: str,
     doc_id: str,
     text: str,
     title: str | None = None,
@@ -42,8 +44,10 @@ def index_document_text(
     chunks = split_text_for_rag(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     summary = summarize_document(normalized_text)
     embeddings = embed_texts(chunks)
-    index_chunks_in_chroma(doc_id, chunks, embeddings)
+    storage_doc_id = scoped_doc_id(user_id, doc_id)
+    index_chunks_in_chroma(storage_doc_id, chunks, embeddings)
     save_indexed_document(
+        user_id=user_id,
         doc_id=doc_id,
         chunks=chunks,
         embeddings=embeddings,
@@ -69,19 +73,20 @@ def summarize_document(text: str) -> str:
         return summary_input[:500]
 
 
-def retrieve_relevant_chunks(doc_id: str, question: str, top_k: int = 3) -> list[RagSource]:
+def retrieve_relevant_chunks(user_id: str, doc_id: str, question: str, top_k: int = 3) -> list[RagSource]:
     top_k = max(1, min(top_k, 8))
-    chroma_results = retrieve_by_chroma(doc_id, question, top_k)
+    storage_doc_id = scoped_doc_id(user_id, doc_id)
+    chroma_results = retrieve_by_chroma(storage_doc_id, question, top_k)
     if chroma_results:
         return chroma_results
 
-    rows = list_document_chunks(doc_id)
+    rows = list_document_chunks(user_id, doc_id)
     return _retrieve_by_keyword(rows, question, top_k)
 
 
-def answer_with_rag(doc_id: str, question: str, top_k: int = 3) -> tuple[str, list[RagSource]]:
-    sources = retrieve_relevant_chunks(doc_id=doc_id, question=question, top_k=top_k)
-    summary = get_document_summary(doc_id)
+def answer_with_rag(user_id: str, doc_id: str, question: str, top_k: int = 3) -> tuple[str, list[RagSource]]:
+    sources = retrieve_relevant_chunks(user_id=user_id, doc_id=doc_id, question=question, top_k=top_k)
+    summary = get_document_summary(user_id, doc_id)
     if not sources and not summary:
         return "当前文档中没有检索到足够相关的内容。", []
 

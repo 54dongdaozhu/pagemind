@@ -27,6 +27,11 @@ ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-auth-secret-change-me")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))
+BUILTIN_USERNAME = os.getenv("BUILTIN_USERNAME", "meng")
+BUILTIN_PASSWORD = os.getenv("BUILTIN_PASSWORD", "200311")
+BUILTIN_EMAIL = os.getenv("BUILTIN_EMAIL", "meng@local")
 
 
 def validate_settings():

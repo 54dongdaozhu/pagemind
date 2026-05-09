@@ -65,9 +65,10 @@ def retrieval_agent(state: LearningAgentState) -> dict:
             "stop_reason": "no_document",
         }
 
-    summary = call_tool("read_document_summary", doc_id=state["doc_id"])
+    summary = call_tool("read_document_summary", user_id=state["user_id"], doc_id=state["doc_id"])
     sources = call_tool(
         "search_document_chunks",
+        user_id=state["user_id"],
         doc_id=state["doc_id"],
         query=state["query"],
         top_k=5,
@@ -131,10 +132,11 @@ def synthesis_agent(state: LearningAgentState) -> dict:
     }
 
 
-def run_learning_agents(message: str, doc_id: str | None = None) -> LearningAgentState:
+def run_learning_agents(user_id: str, message: str, doc_id: str | None = None) -> LearningAgentState:
     decision = supervisor_agent(message, doc_id)
     intent: Intent = decision["intent"]
     state: LearningAgentState = {
+        "user_id": user_id,
         "doc_id": doc_id,
         "message": message,
         "intent": intent,

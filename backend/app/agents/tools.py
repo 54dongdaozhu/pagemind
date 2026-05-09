@@ -21,21 +21,21 @@ from app.services.rag_service import answer_with_rag, get_document_summary, retr
 
 
 @tool
-def search_document_chunks(doc_id: str, query: str, top_k: int = 4):
+def search_document_chunks(user_id: str, doc_id: str, query: str, top_k: int = 4):
     """根据查询语句从当前文档中检索相关片段。"""
-    return retrieve_relevant_chunks(doc_id=doc_id, question=query, top_k=top_k)
+    return retrieve_relevant_chunks(user_id=user_id, doc_id=doc_id, question=query, top_k=top_k)
 
 
 @tool
-def read_document_summary(doc_id: str) -> str:
+def read_document_summary(user_id: str, doc_id: str) -> str:
     """读取当前已索引文档的整体摘要。"""
-    return get_document_summary(doc_id)
+    return get_document_summary(user_id, doc_id)
 
 
 @tool
-def answer_with_document_context(doc_id: str, question: str, top_k: int = 4):
+def answer_with_document_context(user_id: str, doc_id: str, question: str, top_k: int = 4):
     """基于文档摘要和检索片段直接生成文档问答结果。"""
-    reply, sources = answer_with_rag(doc_id=doc_id, question=question, top_k=top_k)
+    reply, sources = answer_with_rag(user_id=user_id, doc_id=doc_id, question=question, top_k=top_k)
     return {"reply": reply, "sources": sources}
 
 
@@ -46,33 +46,33 @@ def extract_knowledge_from_chunk(text: str):
 
 
 @tool
-def get_knowledge_status_batch(kp_texts: list[str]):
+def get_knowledge_status_batch(user_id: str, kp_texts: list[str]):
     """批量读取知识点的学习状态和点击次数。"""
-    return get_status_batch(kp_texts)
+    return get_status_batch(user_id, kp_texts)
 
 
 @tool
-def record_knowledge_click(kp_text: str, kp_type: str):
+def record_knowledge_click(user_id: str, kp_text: str, kp_type: str):
     """记录用户点击某个知识点，并更新学习状态。"""
-    return record_click(kp_text=kp_text, kp_type=kp_type)
+    return record_click(user_id=user_id, kp_text=kp_text, kp_type=kp_type)
 
 
 @tool
-def mark_knowledge_known(kp_text: str, kp_type: str):
+def mark_knowledge_known(user_id: str, kp_text: str, kp_type: str):
     """将某个知识点标记为已掌握。"""
-    return mark_known(kp_text=kp_text, kp_type=kp_type)
+    return mark_known(user_id=user_id, kp_text=kp_text, kp_type=kp_type)
 
 
 @tool
-def unmark_knowledge_known(kp_text: str):
+def unmark_knowledge_known(user_id: str, kp_text: str):
     """取消某个知识点的已掌握状态。"""
-    return unmark_known(kp_text=kp_text)
+    return unmark_known(user_id=user_id, kp_text=kp_text)
 
 
 @tool
-def get_learning_stats():
+def get_learning_stats(user_id: str):
     """读取当前用户所有知识点学习状态的聚合统计。"""
-    return get_stats()
+    return get_stats(user_id)
 
 
 @tool

@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { fetchCurrentUser, logoutUser } from '../api/auth'
 import { indexRagDocument } from '../api/rag'
+import AuthScreen from '../features/auth/AuthScreen'
 import DocumentViewer from '../features/document/components/DocumentViewer'
 import { useDocumentUpload } from '../features/document/hooks/useDocumentUpload'
 import { htmlToPlainText } from '../features/document/documentUtils'
@@ -20,6 +22,8 @@ import '../styles/App.css'
 // ========== React 组件 ==========
 
 function App() {
+  const [currentUser, setCurrentUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [selectedKP, setSelectedKP] = useState(null)
   const [hideKnown, setHideKnown] = useState(true)
   const [documents, setDocuments] = useState([])
@@ -36,6 +40,27 @@ function App() {
   const documentAreaRef = useRef(null)
   const highlightedIdsRef = useRef(new Set())
   const documentSnapshotsRef = useRef(new Map())
+
+  useEffect(() => {
+    let active = true
+    fetchCurrentUser()
+      .then(user => {
+        if (active) setCurrentUser(user)
+      })
+      .catch(() => {
+        if (active) setCurrentUser(null)
+      })
+      .finally(() => {
+        if (active) setAuthChecked(true)
+      })
+
+    const handleExpired = () => setCurrentUser(null)
+    window.addEventListener('auth:expired', handleExpired)
+    return () => {
+      active = false
+      window.removeEventListener('auth:expired', handleExpired)
+    }
+  }, [])
 
   const {
     extracting,
@@ -69,7 +94,7 @@ function App() {
 
   const handleHtmlLoaded = useCallback(async (html, file) => {
     const plainText = htmlToPlainText(html)
-    const docId = hashString(`${file.name}:${plainText}`)
+    const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${file.name}:${plainText}`)
     setActiveDocId(docId)
     setDocuments(prev => {
       const nextDoc = {
@@ -95,7 +120,7 @@ function App() {
     })
 
     await extractAllChunks(html)
-  }, [extractAllChunks])
+  }, [currentUser?.user_id, extractAllChunks])
 
   const {
     fileName,
@@ -260,6 +285,14 @@ function App() {
     }
   }
 
+  const handleLogout = () => {
+    logoutUser()
+    setCurrentUser(null)
+    resetDocumentState()
+    setDocuments([])
+    documentSnapshotsRef.current = new Map()
+  }
+
   const handleKPCardClick = (kp) => {
     setSelectedKP(kp)
     if (!docContentRef.current) return
@@ -277,6 +310,18 @@ function App() {
     startDeepExplain(kp)
   }
 
+  if (!authChecked) {
+    return (
+      <div className="auth-loading">
+        正在检查登录状态...
+      </div>
+    )
+  }
+
+  if (!currentUser) {
+    return <AuthScreen onAuthenticated={setCurrentUser} />
+  }
+
   return (
     <div className={`app${tocOpen ? '' : ' toc-collapsed'}`}>
       <SidebarHeader
@@ -285,6 +330,7 @@ function App() {
       />
 
       <AppHeader
+        user={currentUser}
         fileName={fileName}
         extracting={extracting}
         extractProgress={extractProgress}
@@ -292,6 +338,7 @@ function App() {
         hideKnown={hideKnown}
         onHideKnownChange={setHideKnown}
         onFileUpload={handleFileUpload}
+        onLogout={handleLogout}
       />
 
       <TocSidebar

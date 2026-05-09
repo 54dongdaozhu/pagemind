@@ -1,6 +1,7 @@
 import { ACCEPTED_DOCUMENT_TYPES } from '../document/documentParser'
 
 function AppHeader({
+  user,
   fileName,
   extracting,
   extractProgress,
@@ -8,6 +9,7 @@ function AppHeader({
   hideKnown,
   onHideKnownChange,
   onFileUpload,
+  onLogout,
 }) {
   return (
     <header className="main-header">
@@ -36,6 +38,13 @@ function AppHeader({
         <label htmlFor="file-upload" className="upload-button">
           上传文档
         </label>
+        <div className="user-menu" title={user?.email}>
+          <span className="user-avatar">{(user?.username || user?.email || 'U').slice(0, 1).toUpperCase()}</span>
+          <span className="user-name">{user?.username || user?.email}</span>
+          <button type="button" className="logout-button" onClick={onLogout}>
+            退出
+          </button>
+        </div>
         <input
           id="file-upload"
           type="file"

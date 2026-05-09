@@ -1,4 +1,4 @@
-import { API_BASE, postJson } from './client'
+import { apiFetch, postJson } from './client'
 
 
 export function extractKnowledge(text, chunkId) {
@@ -32,7 +32,7 @@ export function unmarkKnowledgeKnown(kp) {
 
 
 export function requestDeepExplanation(kp, context, signal) {
-  return fetch(`${API_BASE}/api/explain-deep`, {
+  return apiFetch('/api/explain-deep', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyword: kp.text, kp_type: kp.type, context }),
