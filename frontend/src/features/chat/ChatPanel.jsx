@@ -2,10 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 import { sendChatMessage } from '../../api/chat'
 import { markdownToHtml } from '../../utils/markdown'
 
-function ChatPanel({ docId, docLoaded }) {
-  const [messages, setMessages] = useState([])
+function ChatPanel({ docId, docLoaded, messages, setMessages, loading, setLoading }) {
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
   const bottomRef = useRef(null)
 
   useEffect(() => {

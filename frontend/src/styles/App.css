@@ -231,20 +231,104 @@ body {
   border-radius: 2px;
 }
 
-.toc-section-title {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--sidebar-text);
-  opacity: 0.6;
-  padding: 16px 14px 8px;
+.toc-section {
+  padding: 8px 0 4px;
+  border-bottom: 1px solid var(--sidebar-border);
   flex-shrink: 0;
+}
+
+.toc-section:last-child {
+  border-bottom: 0;
+  flex: 1;
+}
+
+.toc-section-toggle {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--sidebar-text);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  padding: 4px 12px;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.toc-section-toggle:hover {
+  color: var(--sidebar-text-active);
+  background: var(--sidebar-hover);
+}
+
+.toc-section-arrow {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+  transition: transform 0.12s ease;
+}
+
+.toc-section-toggle[aria-expanded="false"] .toc-section-arrow {
+  transform: translateX(-1px) rotate(-45deg);
 }
 
 .toc-nav {
   flex: 1;
-  padding: 4px 0 16px;
+  padding: 4px 0 12px;
+}
+
+.doc-list-nav {
+  padding: 3px 0 8px;
+}
+
+.doc-list-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--sidebar-text);
+  cursor: pointer;
+  padding: 6px 14px 6px 24px;
+  text-align: left;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.doc-list-item:hover {
+  color: var(--sidebar-text-active);
+  background: var(--sidebar-hover);
+}
+
+.doc-list-item.doc-list-active {
+  color: var(--sidebar-text-active);
+  border-left-color: var(--sidebar-accent);
+  background: var(--sidebar-active-bg);
+  font-weight: 500;
+}
+
+.doc-list-icon {
+  flex: 0 0 auto;
+  font-size: 0.86rem;
+  line-height: 1;
+}
+
+.doc-list-name {
+  min-width: 0;
+  flex: 1;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toc-empty {

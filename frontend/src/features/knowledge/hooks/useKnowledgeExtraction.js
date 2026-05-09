@@ -25,6 +25,15 @@ export function useKnowledgeExtraction() {
     extractingRef.current = false
   }, [])
 
+  const restoreExtraction = useCallback((snapshot = {}) => {
+    extractionRunRef.current += 1
+    setKnowledgePoints(snapshot.knowledgePoints || [])
+    setExtractProgress(snapshot.extractProgress || { done: 0, total: 0 })
+    setExtractError(snapshot.extractError || '')
+    setExtracting(false)
+    extractingRef.current = false
+  }, [])
+
   const extractAllChunks = useCallback(async (html) => {
     if (extractingRef.current) return
     extractingRef.current = true
@@ -98,10 +107,12 @@ export function useKnowledgeExtraction() {
 
   return {
     extracting,
+    knowledgePoints,
     extractProgress,
     extractError,
     uniqueKPs,
     extractAllChunks,
     resetExtraction,
+    restoreExtraction,
   }
 }

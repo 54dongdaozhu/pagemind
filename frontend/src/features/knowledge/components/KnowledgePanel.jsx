@@ -26,6 +26,8 @@ function KnowledgePanel({
   onCardDoubleClick,
 }) {
   const [activeTab, setActiveTab] = useState('knowledge')
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatLoading, setChatLoading] = useState(false)
 
   return (
     <aside className="kp-panel">
@@ -83,7 +85,14 @@ function KnowledgePanel({
           />
         </>
       ) : (
-        <ChatPanel docId={docId} docLoaded={docLoaded} />
+        <ChatPanel
+          docId={docId}
+          docLoaded={docLoaded}
+          messages={chatMessages}
+          setMessages={setChatMessages}
+          loading={chatLoading}
+          setLoading={setChatLoading}
+        />
       )}
     </aside>
   )

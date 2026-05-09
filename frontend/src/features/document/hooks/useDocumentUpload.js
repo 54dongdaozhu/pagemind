@@ -29,8 +29,25 @@ export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded })
       setError('文档解析失败：' + (err.message || `请上传 ${SUPPORTED_DOCUMENT_LABEL} 格式的文件`))
     } finally {
       setLoading(false)
+      event.target.value = ''
     }
   }, [docContentRef, onBeforeLoad, onHtmlLoaded])
+
+  const showParsedDocument = useCallback(({ name, html }) => {
+    setError('')
+    setLoading(false)
+    setFileName(name)
+    setDocLoaded(true)
+    if (docContentRef.current) docContentRef.current.innerHTML = html
+  }, [docContentRef])
+
+  const clearDocument = useCallback(() => {
+    setError('')
+    setLoading(false)
+    setFileName('')
+    setDocLoaded(false)
+    if (docContentRef.current) docContentRef.current.innerHTML = ''
+  }, [docContentRef])
 
   return {
     fileName,
@@ -38,5 +55,7 @@ export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded })
     loading,
     error,
     handleFileUpload,
+    showParsedDocument,
+    clearDocument,
   }
 }

@@ -22,24 +22,30 @@ import '../styles/App.css'
 function App() {
   const [selectedKP, setSelectedKP] = useState(null)
   const [hideKnown, setHideKnown] = useState(true)
-  const [currentDocId, setCurrentDocId] = useState('')
+  const [documents, setDocuments] = useState([])
+  const [activeDocId, setActiveDocId] = useState('')
 
   // 目录相关
   const [tocItems, setTocItems] = useState([])
   const [tocOpen, setTocOpen] = useState(true)
+  const [docListOpen, setDocListOpen] = useState(true)
+  const [tocSectionOpen, setTocSectionOpen] = useState(true)
   const [activeTocId, setActiveTocId] = useState(null)
 
   const docContentRef = useRef(null)
   const documentAreaRef = useRef(null)
   const highlightedIdsRef = useRef(new Set())
+  const documentSnapshotsRef = useRef(new Map())
 
   const {
     extracting,
     extractProgress,
     extractError,
+    knowledgePoints,
     uniqueKPs,
     extractAllChunks,
     resetExtraction,
+    restoreExtraction,
   } = useKnowledgeExtraction()
 
   const {
@@ -55,7 +61,7 @@ function App() {
     resetExtraction()
     setSelectedKP(null)
     resetDeep()
-    setCurrentDocId('')
+    setActiveDocId('')
     setTocItems([])
     setActiveTocId(null)
     highlightedIdsRef.current = new Set()
@@ -64,7 +70,25 @@ function App() {
   const handleHtmlLoaded = useCallback(async (html, file) => {
     const plainText = htmlToPlainText(html)
     const docId = hashString(`${file.name}:${plainText}`)
-    setCurrentDocId(docId)
+    setActiveDocId(docId)
+    setDocuments(prev => {
+      const nextDoc = {
+        id: docId,
+        name: file.name,
+        html,
+        plainText,
+      }
+      const index = prev.findIndex(doc => doc.id === docId)
+      if (index === -1) return [nextDoc, ...prev]
+      const next = [...prev]
+      next[index] = { ...prev[index], ...nextDoc }
+      return next
+    })
+    documentSnapshotsRef.current.set(docId, {
+      knowledgePoints: [],
+      extractProgress: { done: 0, total: 0 },
+      extractError: '',
+    })
 
     indexRagDocument(docId, plainText, file.name).catch(err => {
       console.error('RAG 索引失败:', err)
@@ -79,6 +103,7 @@ function App() {
     loading,
     error,
     handleFileUpload,
+    showParsedDocument,
   } = useDocumentUpload({
     docContentRef,
     onBeforeLoad: resetDocumentState,
@@ -92,6 +117,36 @@ function App() {
     toggleKnown,
     stats,
   } = useKnowledgeStatus(uniqueKPs)
+
+  useEffect(() => {
+    if (!activeDocId) return
+    documentSnapshotsRef.current.set(activeDocId, {
+      knowledgePoints,
+      extractProgress,
+      extractError,
+    })
+  }, [activeDocId, extractError, extractProgress, knowledgePoints])
+
+  const handleSelectDocument = useCallback((docId) => {
+    if (docId === activeDocId) return
+    const doc = documents.find(item => item.id === docId)
+    if (!doc) return
+
+    resetExtraction()
+    setSelectedKP(null)
+    resetDeep()
+    setActiveDocId(docId)
+    setTocItems([])
+    setActiveTocId(null)
+    highlightedIdsRef.current = new Set()
+    showParsedDocument({ name: doc.name, html: doc.html })
+    const snapshot = documentSnapshotsRef.current.get(docId) || {}
+    restoreExtraction({
+      knowledgePoints: snapshot.knowledgePoints,
+      extractProgress: snapshot.extractProgress,
+      extractError: snapshot.extractError,
+    })
+  }, [activeDocId, documents, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
 
   // 增量高亮
   useEffect(() => {
@@ -174,7 +229,7 @@ function App() {
     })
     setTocItems(items)
     setActiveTocId(null)
-  }, [docLoaded])
+  }, [activeDocId, docLoaded])
 
   // IntersectionObserver 跟踪当前章节
   useEffect(() => {
@@ -241,9 +296,16 @@ function App() {
 
       <TocSidebar
         tocOpen={tocOpen}
+        documents={documents}
+        activeDocId={activeDocId}
+        docListOpen={docListOpen}
+        tocSectionOpen={tocSectionOpen}
         tocItems={tocItems}
         activeTocId={activeTocId}
         docLoaded={docLoaded}
+        onToggleDocList={() => setDocListOpen(open => !open)}
+        onToggleTocSection={() => setTocSectionOpen(open => !open)}
+        onSelectDocument={handleSelectDocument}
         onSelectHeading={scrollToHeading}
       />
 
@@ -256,6 +318,7 @@ function App() {
       />
 
       <KnowledgePanel
+        key={activeDocId || 'empty-document'}
         selectedKP={selectedKP}
         showDeep={showDeep}
         deepLoading={deepLoading}
@@ -264,7 +327,7 @@ function App() {
         extractProgress={extractProgress}
         extractError={extractError}
         docLoaded={docLoaded}
-        docId={currentDocId}
+        docId={activeDocId}
         knowledgePoints={uniqueKPs}
         stats={stats}
         getKpStatus={getKpStatus}
