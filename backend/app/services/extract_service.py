@@ -5,10 +5,9 @@ The API keeps the existing response shape used by the frontend, while the
 actual decision-making is delegated to the agent workflow:
 KnowledgeDiscoveryAgent -> KnowledgeFilterAgent -> KnowledgeRankAgent.
 """
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import BoundedSemaphore, RLock
 
 from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items
@@ -19,10 +18,13 @@ from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, Extrac
 
 logger = logging.getLogger(__name__)
 
-_extract_cache = {}
+_extract_cache: dict = {}
 _extract_cache_lock = RLock()
 _extract_db_lock = RLock()
 _llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
+
+# 缓存 TTL：7 天（同一 chunk 内容不会频繁变动）
+_CACHE_TTL_DAYS = 7
 
 
 def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint]:
@@ -35,25 +37,43 @@ def _scoped_chunk_id(user_id: str, chunk_id: str) -> str:
 
 
 def _load_from_cache(cache_key: str, text: str) -> list[KnowledgePoint] | None:
+    now = datetime.now(timezone.utc)
     with get_db() as db:
         cache = db.get(ExtractCache, cache_key)
+
     if cache is None:
         return None
-    data = json.loads(cache.result_json)
+
+    # 检查 TTL：expired_at 存在且已过期，视为缓存失效
+    if cache.expired_at is not None and cache.expired_at < now:
+        return None
+
+    # result 字段已是 JSON 类型，SQLAlchemy 自动反序列化为 list/dict
+    data = cache.result
+    if not isinstance(data, list):
+        return None
     return _to_knowledge_points(data, text)
 
 
 def _save_to_cache(cache_key: str, knowledge_points: list[KnowledgePoint]):
     now = datetime.now(timezone.utc)
-    result_json = json.dumps([kp.model_dump() for kp in knowledge_points], ensure_ascii=False)
+    expired_at = now + timedelta(days=_CACHE_TTL_DAYS)
+    result_data = [kp.model_dump() for kp in knowledge_points]
+
     with _extract_db_lock:
         with get_db() as db:
             cache = db.get(ExtractCache, cache_key)
             if cache is None:
-                db.add(ExtractCache(chunk_id=cache_key, result_json=result_json, created_at=now))
+                db.add(ExtractCache(
+                    chunk_id=cache_key,
+                    result=result_data,
+                    created_at=now,
+                    expired_at=expired_at,
+                ))
             else:
-                cache.result_json = result_json
+                cache.result = result_data
                 cache.created_at = now
+                cache.expired_at = expired_at
             db.commit()
 
 

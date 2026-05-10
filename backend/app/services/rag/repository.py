@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
@@ -28,7 +27,8 @@ def save_indexed_document(
                     doc_id=storage_doc_id,
                     chunk_index=idx,
                     content=content,
-                    embedding_json=json.dumps(embeddings[idx]) if embeddings and idx < len(embeddings) else None,
+                    # embedding_json 字段为 JSON 类型，直接传 list，无需 json.dumps
+                    embedding_json=embeddings[idx] if embeddings and idx < len(embeddings) else None,
                     created_at=now,
                 )
                 for idx, content in enumerate(chunks)
@@ -77,7 +77,8 @@ def list_document_chunks(user_id: str, doc_id: str):
             {
                 "chunk_index": chunk.chunk_index,
                 "content": chunk.content,
-                "embedding_json": chunk.embedding_json,
+                # JSON 类型字段，已由 SQLAlchemy 反序列化为 list（或 None）
+                "embedding": chunk.embedding_json,
             }
             for chunk in chunks
         ]
