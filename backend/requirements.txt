@@ -3,6 +3,7 @@ uvicorn
 python-dotenv
 requests
 SQLAlchemy
+alembic
 psycopg2-binary
 langgraph
 langchain

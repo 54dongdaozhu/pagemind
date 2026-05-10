@@ -1,5 +1,4 @@
 from contextlib import contextmanager
-import uuid
 
 from sqlalchemy import (
     JSON,
@@ -13,8 +12,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
-    inspect,
-    text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -341,217 +338,15 @@ def get_db():
         session.close()
 
 
-def init_db():
-    Base.metadata.create_all(bind=engine)
-    migrate_db()
+def init_db() -> None:
+    """启动时运行所有 Alembic 迁移（等价于 `alembic upgrade head`）。"""
+    import os
+    from alembic.config import Config
+    from alembic import command
+
+    # alembic.ini 与本文件的相对位置：backend/app/core/ → backend/
+    _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    cfg = Config(os.path.join(_backend_dir, "alembic.ini"))
+    command.upgrade(cfg, "head")
 
 
-def _col_names(inspector, table: str) -> set:
-    return {c["name"] for c in inspector.get_columns(table)}
-
-
-def migrate_db():
-    """
-    幂等迁移函数：检测并补齐已有数据库中缺失的列和结构。
-    新表由 create_all 自动创建，此函数只处理已有表的列变更。
-    """
-    inspector = inspect(engine)
-    table_names = set(inspector.get_table_names())
-
-    if not table_names:
-        return
-
-    is_sqlite = DATABASE_URL.startswith("sqlite")
-    is_postgres = DATABASE_URL.startswith("postgresql") or DATABASE_URL.startswith("postgres")
-
-    with engine.begin() as conn:
-        # ── 1. users: 补充 password_hash 列 ─────────────────────────────
-        if "users" in table_names:
-            if "password_hash" not in _col_names(inspector, "users"):
-                conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"))
-
-        # ── 2. knowledge_points: kp_text PK → kp_id PK ──────────────────
-        # 检测旧 schema（kp_text 为 PK，kp_id 不存在）并完成迁移
-        if "knowledge_points" in table_names:
-            kp_cols = _col_names(inspector, "knowledge_points")
-
-            if "kp_id" not in kp_cols:
-                # Step A: 添加 kp_id 列并填充 UUID
-                conn.execute(text("ALTER TABLE knowledge_points ADD COLUMN kp_id VARCHAR(32)"))
-                rows = conn.execute(text("SELECT kp_text FROM knowledge_points")).fetchall()
-                for (kp_text,) in rows:
-                    new_id = uuid.uuid4().hex
-                    conn.execute(
-                        text("UPDATE knowledge_points SET kp_id = :id WHERE kp_text = :t"),
-                        {"id": new_id, "t": kp_text},
-                    )
-
-                if is_postgres:
-                    # Step B: 删除子表中指向 knowledge_points(kp_text) 的 FK 约束
-                    for child_table in ("study_records", "chunk_knowledge_points", "review_records"):
-                        if child_table not in table_names:
-                            continue
-                        fks = inspector.get_foreign_keys(child_table)
-                        for fk in fks:
-                            if fk.get("referred_table") == "knowledge_points" and fk.get("name"):
-                                conn.execute(text(
-                                    f"ALTER TABLE {child_table} DROP CONSTRAINT IF EXISTS {fk['name']}"
-                                ))
-
-                    # Step C: 切换 knowledge_points 主键
-                    conn.execute(text("ALTER TABLE knowledge_points ALTER COLUMN kp_id SET NOT NULL"))
-                    conn.execute(text("ALTER TABLE knowledge_points DROP CONSTRAINT knowledge_points_pkey"))
-                    conn.execute(text(
-                        "ALTER TABLE knowledge_points ADD CONSTRAINT uq_kp_text UNIQUE (kp_text)"
-                    ))
-                    conn.execute(text("ALTER TABLE knowledge_points ADD PRIMARY KEY (kp_id)"))
-
-        # ── 3. study_records: 新增 kp_id 列并回填 ───────────────────────
-        if "study_records" in table_names:
-            sr_cols = _col_names(inspector, "study_records")
-
-            if "kp_id" not in sr_cols:
-                conn.execute(text("ALTER TABLE study_records ADD COLUMN kp_id VARCHAR(32)"))
-
-            if "kp_id" in _col_names(inspector, "study_records") and "knowledge_points" in table_names:
-                # 确保 study_records 中的 kp_text 在 knowledge_points 中存在（修复旧 FK 缺失问题）
-                orphaned = conn.execute(text("""
-                    SELECT DISTINCT sr.kp_text
-                    FROM study_records sr
-                    LEFT JOIN knowledge_points kp ON sr.kp_text = kp.kp_text
-                    WHERE kp.kp_text IS NULL
-                """)).fetchall()
-
-                now_str = "now()" if is_postgres else "datetime('now')"
-                for (kp_text,) in orphaned:
-                    new_id = uuid.uuid4().hex
-                    conn.execute(
-                        text(f"""
-                            INSERT INTO knowledge_points (kp_id, kp_text, kp_type, importance, created_at, updated_at)
-                            VALUES (:id, :t, 'term', 'medium', {now_str}, {now_str})
-                        """),
-                        {"id": new_id, "t": kp_text},
-                    )
-
-                # 回填 kp_id
-                if is_postgres:
-                    conn.execute(text("""
-                        UPDATE study_records sr
-                        SET kp_id = kp.kp_id
-                        FROM knowledge_points kp
-                        WHERE sr.kp_text = kp.kp_text
-                          AND sr.kp_id IS NULL
-                    """))
-                else:
-                    conn.execute(text("""
-                        UPDATE study_records
-                        SET kp_id = (
-                            SELECT kp_id FROM knowledge_points
-                            WHERE knowledge_points.kp_text = study_records.kp_text
-                            LIMIT 1
-                        )
-                        WHERE kp_id IS NULL
-                    """))
-
-        # ── 4. chunk_knowledge_points: 新增 kp_id 列并回填 ──────────────
-        if "chunk_knowledge_points" in table_names and "knowledge_points" in table_names:
-            ckp_cols = _col_names(inspector, "chunk_knowledge_points")
-            if "kp_id" not in ckp_cols:
-                conn.execute(text("ALTER TABLE chunk_knowledge_points ADD COLUMN kp_id VARCHAR(32)"))
-                if is_postgres:
-                    conn.execute(text("""
-                        UPDATE chunk_knowledge_points ckp
-                        SET kp_id = kp.kp_id
-                        FROM knowledge_points kp
-                        WHERE ckp.kp_text = kp.kp_text
-                    """))
-                else:
-                    conn.execute(text("""
-                        UPDATE chunk_knowledge_points
-                        SET kp_id = (
-                            SELECT kp_id FROM knowledge_points
-                            WHERE knowledge_points.kp_text = chunk_knowledge_points.kp_text
-                            LIMIT 1
-                        )
-                    """))
-
-        # ── 5. review_records: 新增 kp_id 列并回填 ──────────────────────
-        if "review_records" in table_names and "knowledge_points" in table_names:
-            rr_cols = _col_names(inspector, "review_records")
-            if "kp_id" not in rr_cols:
-                conn.execute(text("ALTER TABLE review_records ADD COLUMN kp_id VARCHAR(32)"))
-                if is_postgres:
-                    conn.execute(text("""
-                        UPDATE review_records rr
-                        SET kp_id = kp.kp_id
-                        FROM knowledge_points kp
-                        WHERE rr.kp_text = kp.kp_text
-                    """))
-                else:
-                    conn.execute(text("""
-                        UPDATE review_records
-                        SET kp_id = (
-                            SELECT kp_id FROM knowledge_points
-                            WHERE knowledge_points.kp_text = review_records.kp_text
-                            LIMIT 1
-                        )
-                    """))
-
-        # ── 6. extract_caches: result_json → result，新增 expired_at ────
-        if "extract_caches" in table_names:
-            ec_cols = _col_names(inspector, "extract_caches")
-            if "result_json" in ec_cols and "result" not in ec_cols:
-                # SQLite 3.25+ 和 PostgreSQL 均支持 RENAME COLUMN
-                conn.execute(text("ALTER TABLE extract_caches RENAME COLUMN result_json TO result"))
-            if "expired_at" not in _col_names(inspector, "extract_caches"):
-                ts_type = "TIMESTAMP WITH TIME ZONE" if is_postgres else "TIMESTAMP"
-                conn.execute(text(
-                    f"ALTER TABLE extract_caches ADD COLUMN expired_at {ts_type}"
-                ))
-
-        # ── 7. llm_call_logs: 新增上下文关联列 ──────────────────────────
-        if "llm_call_logs" in table_names:
-            llm_cols = _col_names(inspector, "llm_call_logs")
-            new_cols = [
-                ("run_id", "VARCHAR(32)"),
-                ("step_id", "VARCHAR(32)"),
-                ("qa_id", "TEXT"),
-                ("user_id", "VARCHAR(64)"),
-                ("total_tokens", "INTEGER"),
-                ("cost_usd", "FLOAT"),
-            ]
-            for col_name, col_type in new_cols:
-                if col_name not in llm_cols:
-                    conn.execute(text(
-                        f"ALTER TABLE llm_call_logs ADD COLUMN {col_name} {col_type}"
-                    ))
-            # error_message 重命名为 error_details（只做 PostgreSQL，SQLite 跳过）
-            if is_postgres and "error_message" in llm_cols and "error_details" not in llm_cols:
-                conn.execute(text(
-                    "ALTER TABLE llm_call_logs RENAME COLUMN error_message TO error_details"
-                ))
-
-        # ── 8. tool_call_logs: 新增上下文关联列 ─────────────────────────
-        if "tool_call_logs" in table_names:
-            tcl_cols = _col_names(inspector, "tool_call_logs")
-            new_cols = [
-                ("run_id", "VARCHAR(32)"),
-                ("step_id", "VARCHAR(32)"),
-                ("qa_id", "TEXT"),
-                ("user_id", "VARCHAR(64)"),
-            ]
-            for col_name, col_type in new_cols:
-                if col_name not in tcl_cols:
-                    conn.execute(text(
-                        f"ALTER TABLE tool_call_logs ADD COLUMN {col_name} {col_type}"
-                    ))
-            if is_postgres and "error_message" in tcl_cols and "error_details" not in tcl_cols:
-                conn.execute(text(
-                    "ALTER TABLE tool_call_logs RENAME COLUMN error_message TO error_details"
-                ))
-
-        # ── 9. qa_records: tools_used_json → tools_used ──────────────────
-        if "qa_records" in table_names:
-            qa_cols = _col_names(inspector, "qa_records")
-            if "tools_used_json" in qa_cols and "tools_used" not in qa_cols:
-                conn.execute(text("ALTER TABLE qa_records RENAME COLUMN tools_used_json TO tools_used"))
