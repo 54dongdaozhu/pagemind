@@ -11,7 +11,7 @@ from app.agents.prompts import FALLBACK_PROMPT, SUPERVISOR_PROMPT, SYNTHESIS_PRO
 from app.agents.state import Intent, LearningAgentState
 from app.agents.tool_registry import call_tool, list_tools
 from app.agents.utils import safe_parse_json
-from app.services.llm_service import call_deepseek
+from app.services.llm_service import call_deepseek, call_deepseek_stream
 
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,76 @@ def run_learning_agents(user_id: str, message: str, doc_id: str | None = None) -
 
     state["tools_used"] = _dedupe_tools(state["tools_used"])
     return state
+
+
+def stream_learning_agents(user_id: str, message: str, doc_id: str | None = None):
+    """Run supervisor + retrieval synchronously, then stream the final LLM answer."""
+    decision = supervisor_agent(message, doc_id)
+    intent: Intent = decision["intent"]
+    state: LearningAgentState = {
+        "user_id": user_id,
+        "doc_id": doc_id,
+        "message": message,
+        "intent": intent,
+        "query": decision["query"],
+        "summary": "",
+        "sources": [],
+        "answer": "",
+        "tools_used": ["SupervisorAgent"],
+        "active_agent": "SupervisorAgent",
+        "stop_reason": "started",
+    }
+
+    if intent == "unknown" and not doc_id:
+        messages = [
+            {"role": "system", "content": FALLBACK_PROMPT},
+            {"role": "user", "content": message},
+        ]
+        yield from call_deepseek_stream(messages, temperature=0.3)
+        return
+
+    state.update(retrieval_agent(state))
+
+    if intent == "practice":
+        state.update(practice_agent(state))
+        yield state["answer"]
+        return
+    elif intent == "grade":
+        state.update(grading_agent(state))
+        yield state["answer"]
+        return
+    elif intent == "relation":
+        state.update(relation_mapping_agent(state))
+        yield state["answer"]
+        return
+    elif intent == "structure":
+        state.update(document_structure_agent(state))
+        yield state["answer"]
+        return
+    elif intent == "review":
+        state.update(reflection_agent(state))
+        yield state["answer"]
+        return
+    elif intent in ["summarize", "compare"]:
+        context = _format_context(state["sources"])
+        messages = [
+            {"role": "system", "content": SYNTHESIS_PROMPT},
+            {
+                "role": "user",
+                "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户请求】\n{message}",
+            },
+        ]
+        yield from call_deepseek_stream(messages, temperature=0.2)
+    else:
+        context = _format_context(state["sources"])
+        messages = [
+            {"role": "system", "content": TUTOR_PROMPT},
+            {
+                "role": "user",
+                "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户问题】\n{message}",
+            },
+        ]
+        yield from call_deepseek_stream(messages, temperature=0.25)
 
 
 def _heuristic_supervisor(message: str) -> dict:
