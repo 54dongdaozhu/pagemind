@@ -18,6 +18,17 @@ from app.services.llm_service import call_deepseek, call_deepseek_stream
 
 logger = logging.getLogger(__name__)
 
+# intent → 对应的专项 agent 函数（复杂 agent，内部调工具而非直接调 LLM 流）
+_COMPLEX_AGENT_MAP = {
+    "practice": practice_agent,
+    "grade": grading_agent,
+    "relation": relation_mapping_agent,
+    "structure": document_structure_agent,
+    "review": reflection_agent,
+}
+
+
+# ── 基础 agent 函数 ────────────────────────────────────────────────────────────
 
 def supervisor_agent(message: str, doc_id: str | None) -> dict:
     if not doc_id:
@@ -36,16 +47,8 @@ def supervisor_agent(message: str, doc_id: str | None) -> dict:
         parsed = safe_parse_json(raw_reply)
         intent = parsed.get("intent", "qa")
         if intent not in [
-            "qa",
-            "explain",
-            "summarize",
-            "compare",
-            "practice",
-            "grade",
-            "relation",
-            "structure",
-            "review",
-            "unknown",
+            "qa", "explain", "summarize", "compare",
+            "practice", "grade", "relation", "structure", "review", "unknown",
         ]:
             intent = "qa"
         return {
@@ -75,35 +78,28 @@ def retrieval_agent(state: LearningAgentState) -> dict:
         query=state["query"],
         top_k=5,
     )
-    tools_used = [*state["tools_used"], "read_document_summary", "search_document_chunks"]
     return {
         "summary": summary,
         "sources": sources,
-        "tools_used": tools_used,
+        "tools_used": [*state["tools_used"], "read_document_summary", "search_document_chunks"],
         "stop_reason": "retrieved",
     }
 
 
 def tutor_agent(state: LearningAgentState) -> dict:
     if not state["summary"] and not state["sources"]:
-        answer = _fallback_answer(state["message"])
         return {
-            "answer": answer,
+            "answer": _fallback_answer(state["message"]),
             "active_agent": "TutorAgent",
             "stop_reason": "no_context",
         }
-
     context = _format_context(state["sources"])
     messages = [
         {"role": "system", "content": TUTOR_PROMPT},
-        {
-            "role": "user",
-            "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户问题】\n{state['message']}",
-        },
+        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户问题】\n{state['message']}"},
     ]
-    answer = call_deepseek(messages, temperature=0.25)
     return {
-        "answer": answer,
+        "answer": call_deepseek(messages, temperature=0.25),
         "active_agent": "TutorAgent",
         "stop_reason": "answered",
     }
@@ -111,149 +107,150 @@ def tutor_agent(state: LearningAgentState) -> dict:
 
 def synthesis_agent(state: LearningAgentState) -> dict:
     if not state["summary"] and not state["sources"]:
-        answer = _fallback_answer(state["message"])
         return {
-            "answer": answer,
+            "answer": _fallback_answer(state["message"]),
             "active_agent": "SynthesisAgent",
             "stop_reason": "no_context",
         }
-
     context = _format_context(state["sources"])
     messages = [
         {"role": "system", "content": SYNTHESIS_PROMPT},
-        {
-            "role": "user",
-            "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户请求】\n{state['message']}",
-        },
+        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户请求】\n{state['message']}"},
     ]
-    answer = call_deepseek(messages, temperature=0.2)
     return {
-        "answer": answer,
+        "answer": call_deepseek(messages, temperature=0.2),
         "active_agent": "SynthesisAgent",
         "stop_reason": "answered",
     }
 
 
+# ── 共享编排 helper ────────────────────────────────────────────────────────────
+
+def _init_state(user_id: str, doc_id: str | None, message: str, decision: dict) -> LearningAgentState:
+    return {
+        "user_id": user_id,
+        "doc_id": doc_id,
+        "message": message,
+        "intent": decision["intent"],
+        "query": decision["query"],
+        "summary": "",
+        "sources": [],
+        "answer": "",
+        "tools_used": ["SupervisorAgent"],
+        "active_agent": "SupervisorAgent",
+        "stop_reason": "started",
+    }
+
+
+def _log_supervisor(message: str, doc_id: str | None, run_id: str) -> dict:
+    """运行 supervisor_agent 并记录步骤日志，返回 decision dict。"""
+    step_id = db_log.create_workflow_step(
+        run_id=run_id, step_name="supervisor", step_order=1,
+        input_data={"message": message[:500]},
+    )
+    token = db_log.current_step_id.set(step_id)
+    ok, decision = True, None
+    try:
+        decision = supervisor_agent(message, doc_id)
+        return decision
+    except Exception:
+        ok = False
+        raise
+    finally:
+        db_log.current_step_id.reset(token)
+        db_log.finish_workflow_step(
+            step_id, success=ok,
+            output_data={"intent": decision.get("intent") if decision else None},
+        )
+
+
+def _log_retrieval(state: LearningAgentState, run_id: str) -> None:
+    """运行 retrieval_agent 并记录步骤日志，就地更新 state。"""
+    step_id = db_log.create_workflow_step(
+        run_id=run_id, step_name="retrieval", step_order=2,
+        input_data={"query": state["query"]},
+    )
+    token = db_log.current_step_id.set(step_id)
+    try:
+        state.update(retrieval_agent(state))
+    finally:
+        db_log.current_step_id.reset(token)
+        db_log.finish_workflow_step(step_id, output_data={"source_count": len(state.get("sources", []))})
+
+
+def _build_llm_messages(state: LearningAgentState) -> tuple[list, float]:
+    """为流式路径构建最终 LLM 消息，返回 (messages, temperature)。"""
+    context = _format_context(state["sources"])
+    if state["intent"] in ["summarize", "compare"]:
+        return [
+            {"role": "system", "content": SYNTHESIS_PROMPT},
+            {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户请求】\n{state['message']}"},
+        ], 0.2
+    return [
+        {"role": "system", "content": TUTOR_PROMPT},
+        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户问题】\n{state['message']}"},
+    ], 0.25
+
+
+# ── 公共编排入口 ───────────────────────────────────────────────────────────────
+
 def run_learning_agents(user_id: str, message: str, doc_id: str | None = None) -> LearningAgentState:
     run_id = db_log.create_workflow_run(
         workflow_type="agent_chat",
-        user_id=user_id,
-        doc_id=doc_id,
+        user_id=user_id, doc_id=doc_id,
         input_data={"message": message[:500]},
     )
     run_id_token = db_log.current_run_id.set(run_id)
-
-    success = True
-    error_info = None
-    state: LearningAgentState | None = None
-    start = time.monotonic()
+    success, error_info, state, start = True, None, None, time.monotonic()
     try:
-        # ── Step 1: Supervisor ────────────────────────────────────────────────
-        step_id = db_log.create_workflow_step(
-            run_id=run_id, step_name="supervisor", step_order=1,
-            input_data={"message": message[:500]},
-        )
-        step_id_token = db_log.current_step_id.set(step_id)
-        decision = None
-        _sup_ok = True
-        try:
-            decision = supervisor_agent(message, doc_id)
-        except Exception:
-            _sup_ok = False
-            raise
-        finally:
-            db_log.current_step_id.reset(step_id_token)
-            db_log.finish_workflow_step(
-                step_id,
-                success=_sup_ok,
-                output_data={"intent": decision.get("intent") if decision else None},
-            )
+        decision = _log_supervisor(message, doc_id, run_id)
+        state = _init_state(user_id, doc_id, message, decision)
 
-        intent: Intent = decision["intent"]
-        state = {
-            "user_id": user_id,
-            "doc_id": doc_id,
-            "message": message,
-            "intent": intent,
-            "query": decision["query"],
-            "summary": "",
-            "sources": [],
-            "answer": "",
-            "tools_used": ["SupervisorAgent"],
-            "active_agent": "SupervisorAgent",
-            "stop_reason": "started",
-        }
-
-        if intent == "unknown" and not doc_id:
-            state.update(
-                {
-                    "answer": _fallback_answer(message),
-                    "active_agent": "SupervisorAgent",
-                    "stop_reason": "no_document",
-                }
-            )
+        if state["intent"] == "unknown" and not doc_id:
+            state.update({
+                "answer": _fallback_answer(message),
+                "active_agent": "SupervisorAgent",
+                "stop_reason": "no_document",
+            })
             return state
 
-        # ── Step 2: Retrieval ─────────────────────────────────────────────────
-        step_id = db_log.create_workflow_step(
-            run_id=run_id, step_name="retrieval", step_order=2,
-            input_data={"query": state["query"]},
-        )
-        step_id_token = db_log.current_step_id.set(step_id)
-        try:
-            state.update(retrieval_agent(state))
-        finally:
-            db_log.current_step_id.reset(step_id_token)
-            db_log.finish_workflow_step(step_id, output_data={"source_count": len(state.get("sources", []))})
+        _log_retrieval(state, run_id)
 
-        # ── Step 3: Final agent ───────────────────────────────────────────────
-        agent_name = state.get("active_agent") or intent
+        agent_name = state.get("active_agent") or state["intent"]
         step_id = db_log.create_workflow_step(
             run_id=run_id, step_name=agent_name, step_order=3,
-            input_data={"intent": intent},
+            input_data={"intent": state["intent"]},
         )
         step_id_token = db_log.current_step_id.set(step_id)
-        final_success = True
-        final_error = None
+        final_ok, final_err = True, None
         try:
-            if intent == "practice":
-                state.update(practice_agent(state))
-            elif intent == "grade":
-                state.update(grading_agent(state))
-            elif intent == "relation":
-                state.update(relation_mapping_agent(state))
-            elif intent == "structure":
-                state.update(document_structure_agent(state))
-            elif intent == "review":
-                state.update(reflection_agent(state))
-            elif intent in ["summarize", "compare"]:
+            agent_fn = _COMPLEX_AGENT_MAP.get(state["intent"])
+            if agent_fn:
+                state.update(agent_fn(state))
+            elif state["intent"] in ["summarize", "compare"]:
                 state.update(synthesis_agent(state))
             else:
                 state.update(tutor_agent(state))
         except Exception as e:
-            final_success = False
-            final_error = {"error": str(e)}
+            final_ok, final_err = False, {"error": str(e)}
             raise
         finally:
             db_log.current_step_id.reset(step_id_token)
             db_log.finish_workflow_step(
-                step_id,
-                success=final_success,
+                step_id, success=final_ok,
                 output_data={"stop_reason": state.get("stop_reason")},
-                error_details=final_error,
+                error_details=final_err,
             )
 
         state["tools_used"] = _dedupe_tools(state["tools_used"])
         return state
     except Exception as e:
-        success = False
-        error_info = {"error": str(e)}
+        success, error_info = False, {"error": str(e)}
         raise
     finally:
         db_log.current_run_id.reset(run_id_token)
         db_log.finish_workflow_run(
-            run_id,
-            success=success,
+            run_id, success=success,
             output_data={
                 "latency_ms": int((time.monotonic() - start) * 1000),
                 "intent": state.get("intent") if state else None,
@@ -264,74 +261,64 @@ def run_learning_agents(user_id: str, message: str, doc_id: str | None = None) -
 
 
 def stream_learning_agents(user_id: str, message: str, doc_id: str | None = None):
-    """Run supervisor + retrieval synchronously, then stream the final LLM answer."""
-    decision = supervisor_agent(message, doc_id)
-    intent: Intent = decision["intent"]
-    state: LearningAgentState = {
-        "user_id": user_id,
-        "doc_id": doc_id,
-        "message": message,
-        "intent": intent,
-        "query": decision["query"],
-        "summary": "",
-        "sources": [],
-        "answer": "",
-        "tools_used": ["SupervisorAgent"],
-        "active_agent": "SupervisorAgent",
-        "stop_reason": "started",
-    }
+    run_id = db_log.create_workflow_run(
+        workflow_type="agent_chat_stream",
+        user_id=user_id, doc_id=doc_id,
+        input_data={"message": message[:500]},
+    )
+    run_id_token = db_log.current_run_id.set(run_id)
+    success, error_info, start = True, None, time.monotonic()
+    try:
+        decision = _log_supervisor(message, doc_id, run_id)
+        state = _init_state(user_id, doc_id, message, decision)
 
-    if intent == "unknown" and not doc_id:
-        messages = [
-            {"role": "system", "content": FALLBACK_PROMPT},
-            {"role": "user", "content": message},
-        ]
-        yield from call_deepseek_stream(messages, temperature=0.3)
-        return
+        if state["intent"] == "unknown" and not doc_id:
+            yield from call_deepseek_stream(
+                [{"role": "system", "content": FALLBACK_PROMPT}, {"role": "user", "content": message}],
+                temperature=0.3,
+            )
+            return
 
-    state.update(retrieval_agent(state))
+        _log_retrieval(state, run_id)
 
-    if intent == "practice":
-        state.update(practice_agent(state))
-        yield state["answer"]
-        return
-    elif intent == "grade":
-        state.update(grading_agent(state))
-        yield state["answer"]
-        return
-    elif intent == "relation":
-        state.update(relation_mapping_agent(state))
-        yield state["answer"]
-        return
-    elif intent == "structure":
-        state.update(document_structure_agent(state))
-        yield state["answer"]
-        return
-    elif intent == "review":
-        state.update(reflection_agent(state))
-        yield state["answer"]
-        return
-    elif intent in ["summarize", "compare"]:
-        context = _format_context(state["sources"])
-        messages = [
-            {"role": "system", "content": SYNTHESIS_PROMPT},
-            {
-                "role": "user",
-                "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户请求】\n{message}",
-            },
-        ]
-        yield from call_deepseek_stream(messages, temperature=0.2)
-    else:
-        context = _format_context(state["sources"])
-        messages = [
-            {"role": "system", "content": TUTOR_PROMPT},
-            {
-                "role": "user",
-                "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【用户问题】\n{message}",
-            },
-        ]
-        yield from call_deepseek_stream(messages, temperature=0.25)
+        agent_name = state.get("active_agent") or state["intent"]
+        step_id = db_log.create_workflow_step(
+            run_id=run_id, step_name=agent_name, step_order=3,
+            input_data={"intent": state["intent"]},
+        )
+        step_id_token = db_log.current_step_id.set(step_id)
+        final_ok, final_err = True, None
+        try:
+            agent_fn = _COMPLEX_AGENT_MAP.get(state["intent"])
+            if agent_fn:
+                state.update(agent_fn(state))
+                yield state["answer"]
+            else:
+                messages, temp = _build_llm_messages(state)
+                yield from call_deepseek_stream(messages, temperature=temp)
+        except Exception as e:
+            final_ok, final_err = False, {"error": str(e)}
+            raise
+        finally:
+            db_log.current_step_id.reset(step_id_token)
+            db_log.finish_workflow_step(
+                step_id, success=final_ok,
+                output_data={"intent": state.get("intent")},
+                error_details=final_err,
+            )
+    except Exception as e:
+        success, error_info = False, {"error": str(e)}
+        raise
+    finally:
+        db_log.current_run_id.reset(run_id_token)
+        db_log.finish_workflow_run(
+            run_id, success=success,
+            output_data={"latency_ms": int((time.monotonic() - start) * 1000)},
+            error_details=error_info,
+        )
 
+
+# ── 私有工具函数 ───────────────────────────────────────────────────────────────
 
 def _heuristic_supervisor(message: str) -> dict:
     text = message.strip()
@@ -346,36 +333,24 @@ def _heuristic_supervisor(message: str) -> dict:
 
     intent = "qa"
     active_agent = "RetrievalAgent"
-    if any(keyword in text for keyword in practice_keywords):
-        intent = "practice"
-        active_agent = "PracticeAgent"
-    elif any(keyword in text for keyword in grade_keywords):
-        intent = "grade"
-        active_agent = "PracticeAgent"
-    elif any(keyword in text for keyword in relation_keywords):
-        intent = "relation"
-        active_agent = "RelationMappingAgent"
-    elif any(keyword in text for keyword in review_keywords):
-        intent = "review"
-        active_agent = "ReflectionAgent"
-    elif any(keyword in text for keyword in structure_keywords):
-        intent = "structure"
-        active_agent = "DocumentStructureAgent"
-    elif any(keyword in text for keyword in summarize_keywords):
-        intent = "summarize"
-        active_agent = "SynthesisAgent"
-    elif any(keyword in text for keyword in compare_keywords):
-        intent = "compare"
-        active_agent = "SynthesisAgent"
-    elif any(keyword in text for keyword in explain_keywords):
-        intent = "explain"
-        active_agent = "TutorAgent"
+    if any(k in text for k in practice_keywords):
+        intent, active_agent = "practice", "PracticeAgent"
+    elif any(k in text for k in grade_keywords):
+        intent, active_agent = "grade", "PracticeAgent"
+    elif any(k in text for k in relation_keywords):
+        intent, active_agent = "relation", "RelationMappingAgent"
+    elif any(k in text for k in review_keywords):
+        intent, active_agent = "review", "ReflectionAgent"
+    elif any(k in text for k in structure_keywords):
+        intent, active_agent = "structure", "DocumentStructureAgent"
+    elif any(k in text for k in summarize_keywords):
+        intent, active_agent = "summarize", "SynthesisAgent"
+    elif any(k in text for k in compare_keywords):
+        intent, active_agent = "compare", "SynthesisAgent"
+    elif any(k in text for k in explain_keywords):
+        intent, active_agent = "explain", "TutorAgent"
 
-    return {
-        "intent": intent,
-        "query": text,
-        "active_agent": active_agent,
-    }
+    return {"intent": intent, "query": text, "active_agent": active_agent}
 
 
 def _format_tool_catalog() -> str:
@@ -395,16 +370,12 @@ def _format_context(sources) -> str:
 
 
 def _fallback_answer(message: str) -> str:
-    messages = [
-        {"role": "system", "content": FALLBACK_PROMPT},
-        {"role": "user", "content": message},
-    ]
-    return call_deepseek(messages, temperature=0.3)
+    return call_deepseek(
+        [{"role": "system", "content": FALLBACK_PROMPT}, {"role": "user", "content": message}],
+        temperature=0.3,
+    )
 
 
 def _dedupe_tools(tools: list[str]) -> list[str]:
-    deduped = []
-    for tool in tools:
-        if tool not in deduped:
-            deduped.append(tool)
-    return deduped
+    seen: set[str] = set()
+    return [t for t in tools if not (t in seen or seen.add(t))]
