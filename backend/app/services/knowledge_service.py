@@ -241,7 +241,14 @@ def get_stats(user_id: str):
 
 
 def reset_all(user_id: str):
+    from app.services import db_log
     with get_db() as db:
         db.execute(delete(StudyRecord).where(StudyRecord.user_id == user_id))
         db.commit()
+    db_log.log_event(
+        entity_type="study_records",
+        entity_id=user_id,
+        event_type="study.reset_all",
+        user_id=user_id,
+    )
     return {"message": "已重置所有掌握记录"}

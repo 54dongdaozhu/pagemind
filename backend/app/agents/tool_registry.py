@@ -1,7 +1,9 @@
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from app.agents import tools
+from app.services import db_log
 
 
 @dataclass(frozen=True)
@@ -275,6 +277,22 @@ def get_tool(name: str) -> AgentTool:
 
 def call_tool(name: str, **kwargs):
     tool = get_tool(name)
-    if hasattr(tool.function, "invoke"):
-        return tool.function.invoke(kwargs)
-    return tool.function(**kwargs)
+    start = time.monotonic()
+    error = None
+    try:
+        if hasattr(tool.function, "invoke"):
+            result = tool.function.invoke(kwargs)
+        else:
+            result = tool.function(**kwargs)
+        return result
+    except Exception as e:
+        error = e
+        raise
+    finally:
+        db_log.log_tool_call(
+            tool_name=name,
+            args={k: str(v)[:300] for k, v in kwargs.items() if k != "user_id"},
+            latency_ms=int((time.monotonic() - start) * 1000),
+            success=(error is None),
+            error_details={"error": str(error)} if error else None,
+        )

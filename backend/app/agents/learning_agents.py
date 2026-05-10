@@ -1,4 +1,5 @@
 import logging
+import time
 
 from app.agents.advanced_agents import (
     document_structure_agent,
@@ -11,6 +12,7 @@ from app.agents.prompts import FALLBACK_PROMPT, SUPERVISOR_PROMPT, SYNTHESIS_PRO
 from app.agents.state import Intent, LearningAgentState
 from app.agents.tool_registry import call_tool, list_tools
 from app.agents.utils import safe_parse_json
+from app.services import db_log
 from app.services.llm_service import call_deepseek, call_deepseek_stream
 
 
@@ -133,51 +135,132 @@ def synthesis_agent(state: LearningAgentState) -> dict:
 
 
 def run_learning_agents(user_id: str, message: str, doc_id: str | None = None) -> LearningAgentState:
-    decision = supervisor_agent(message, doc_id)
-    intent: Intent = decision["intent"]
-    state: LearningAgentState = {
-        "user_id": user_id,
-        "doc_id": doc_id,
-        "message": message,
-        "intent": intent,
-        "query": decision["query"],
-        "summary": "",
-        "sources": [],
-        "answer": "",
-        "tools_used": ["SupervisorAgent"],
-        "active_agent": "SupervisorAgent",
-        "stop_reason": "started",
-    }
+    run_id = db_log.create_workflow_run(
+        workflow_type="agent_chat",
+        user_id=user_id,
+        doc_id=doc_id,
+        input_data={"message": message[:500]},
+    )
+    run_id_token = db_log.current_run_id.set(run_id)
 
-    if intent == "unknown" and not doc_id:
-        state.update(
-            {
-                "answer": _fallback_answer(message),
-                "active_agent": "SupervisorAgent",
-                "stop_reason": "no_document",
-            }
+    success = True
+    error_info = None
+    state: LearningAgentState | None = None
+    start = time.monotonic()
+    try:
+        # ── Step 1: Supervisor ────────────────────────────────────────────────
+        step_id = db_log.create_workflow_step(
+            run_id=run_id, step_name="supervisor", step_order=1,
+            input_data={"message": message[:500]},
         )
+        step_id_token = db_log.current_step_id.set(step_id)
+        decision = None
+        _sup_ok = True
+        try:
+            decision = supervisor_agent(message, doc_id)
+        except Exception:
+            _sup_ok = False
+            raise
+        finally:
+            db_log.current_step_id.reset(step_id_token)
+            db_log.finish_workflow_step(
+                step_id,
+                success=_sup_ok,
+                output_data={"intent": decision.get("intent") if decision else None},
+            )
+
+        intent: Intent = decision["intent"]
+        state = {
+            "user_id": user_id,
+            "doc_id": doc_id,
+            "message": message,
+            "intent": intent,
+            "query": decision["query"],
+            "summary": "",
+            "sources": [],
+            "answer": "",
+            "tools_used": ["SupervisorAgent"],
+            "active_agent": "SupervisorAgent",
+            "stop_reason": "started",
+        }
+
+        if intent == "unknown" and not doc_id:
+            state.update(
+                {
+                    "answer": _fallback_answer(message),
+                    "active_agent": "SupervisorAgent",
+                    "stop_reason": "no_document",
+                }
+            )
+            return state
+
+        # ── Step 2: Retrieval ─────────────────────────────────────────────────
+        step_id = db_log.create_workflow_step(
+            run_id=run_id, step_name="retrieval", step_order=2,
+            input_data={"query": state["query"]},
+        )
+        step_id_token = db_log.current_step_id.set(step_id)
+        try:
+            state.update(retrieval_agent(state))
+        finally:
+            db_log.current_step_id.reset(step_id_token)
+            db_log.finish_workflow_step(step_id, output_data={"source_count": len(state.get("sources", []))})
+
+        # ── Step 3: Final agent ───────────────────────────────────────────────
+        agent_name = state.get("active_agent") or intent
+        step_id = db_log.create_workflow_step(
+            run_id=run_id, step_name=agent_name, step_order=3,
+            input_data={"intent": intent},
+        )
+        step_id_token = db_log.current_step_id.set(step_id)
+        final_success = True
+        final_error = None
+        try:
+            if intent == "practice":
+                state.update(practice_agent(state))
+            elif intent == "grade":
+                state.update(grading_agent(state))
+            elif intent == "relation":
+                state.update(relation_mapping_agent(state))
+            elif intent == "structure":
+                state.update(document_structure_agent(state))
+            elif intent == "review":
+                state.update(reflection_agent(state))
+            elif intent in ["summarize", "compare"]:
+                state.update(synthesis_agent(state))
+            else:
+                state.update(tutor_agent(state))
+        except Exception as e:
+            final_success = False
+            final_error = {"error": str(e)}
+            raise
+        finally:
+            db_log.current_step_id.reset(step_id_token)
+            db_log.finish_workflow_step(
+                step_id,
+                success=final_success,
+                output_data={"stop_reason": state.get("stop_reason")},
+                error_details=final_error,
+            )
+
+        state["tools_used"] = _dedupe_tools(state["tools_used"])
         return state
-
-    state.update(retrieval_agent(state))
-
-    if intent == "practice":
-        state.update(practice_agent(state))
-    elif intent == "grade":
-        state.update(grading_agent(state))
-    elif intent == "relation":
-        state.update(relation_mapping_agent(state))
-    elif intent == "structure":
-        state.update(document_structure_agent(state))
-    elif intent == "review":
-        state.update(reflection_agent(state))
-    elif intent in ["summarize", "compare"]:
-        state.update(synthesis_agent(state))
-    else:
-        state.update(tutor_agent(state))
-
-    state["tools_used"] = _dedupe_tools(state["tools_used"])
-    return state
+    except Exception as e:
+        success = False
+        error_info = {"error": str(e)}
+        raise
+    finally:
+        db_log.current_run_id.reset(run_id_token)
+        db_log.finish_workflow_run(
+            run_id,
+            success=success,
+            output_data={
+                "latency_ms": int((time.monotonic() - start) * 1000),
+                "intent": state.get("intent") if state else None,
+                "agent": state.get("active_agent") if state else None,
+            },
+            error_details=error_info,
+        )
 
 
 def stream_learning_agents(user_id: str, message: str, doc_id: str | None = None):

@@ -126,6 +126,14 @@ def register_user(username: str, email: str, password: str) -> dict:
         db.commit()
         db.refresh(user)
 
+    from app.services import db_log
+    db_log.log_event(
+        entity_type="user",
+        entity_id=user.user_id,
+        event_type="user.registered",
+        user_id=user.user_id,
+        meta={"username": normalized_username},
+    )
     return {"access_token": create_access_token(user), "user": user_to_dict(user)}
 
 

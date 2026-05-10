@@ -1,28 +1,39 @@
 import json
+import time
 
 import requests
 from fastapi import HTTPException
 
 from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+from app.services import db_log
 
 
 REQUEST_PROXIES = {"http": None, "https": None}
 
+_PROVIDER = "deepseek"
+_MODEL = "deepseek-chat"
 
-def call_deepseek(messages: list, temperature: float = 0.3, json_mode: bool = False) -> str:
+
+def call_deepseek(
+    messages: list,
+    temperature: float = 0.3,
+    json_mode: bool = False,
+    purpose: str | None = None,
+) -> str:
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": _MODEL,
         "messages": messages,
         "temperature": temperature,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
+    start = time.monotonic()
     try:
         response = requests.post(
             url,
@@ -33,26 +44,59 @@ def call_deepseek(messages: list, temperature: float = 0.3, json_mode: bool = Fa
         )
         response.raise_for_status()
         result = response.json()
-        return result["choices"][0]["message"]["content"]
+        usage = result.get("usage", {})
+        content = result["choices"][0]["message"]["content"]
+        db_log.log_llm_call(
+            provider=_PROVIDER,
+            model=_MODEL,
+            purpose=purpose,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            latency_ms=int((time.monotonic() - start) * 1000),
+            success=True,
+        )
+        return content
     except requests.exceptions.RequestException as e:
+        db_log.log_llm_call(
+            provider=_PROVIDER,
+            model=_MODEL,
+            purpose=purpose,
+            latency_ms=int((time.monotonic() - start) * 1000),
+            success=False,
+            error_details={"error": str(e)},
+        )
         raise HTTPException(status_code=500, detail=f"LLM 调用失败: {str(e)}")
     except (KeyError, IndexError) as e:
         raise HTTPException(status_code=500, detail=f"LLM 返回格式异常: {str(e)}")
 
 
-def call_deepseek_stream(messages: list, temperature: float = 0.5):
+def call_deepseek_stream(
+    messages: list,
+    temperature: float = 0.5,
+    purpose: str | None = None,
+):
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": _MODEL,
         "messages": messages,
         "temperature": temperature,
         "stream": True,
     }
 
+    # Capture context vars before first yield so finally block uses correct values
+    _user_id = db_log.current_user_id.get()
+    _run_id = db_log.current_run_id.get()
+    _step_id = db_log.current_step_id.get()
+    _qa_id = db_log.current_qa_id.get()
+
+    start = time.monotonic()
+    success = True
+    error_info = None
     try:
         with requests.post(
             url,
@@ -81,7 +125,22 @@ def call_deepseek_stream(messages: list, temperature: float = 0.5):
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
     except requests.exceptions.RequestException as e:
+        success = False
+        error_info = {"error": str(e)}
         yield f"\n\n[错误] LLM 调用失败: {str(e)}"
+    finally:
+        db_log.log_llm_call(
+            provider=_PROVIDER,
+            model=_MODEL,
+            purpose=purpose,
+            latency_ms=int((time.monotonic() - start) * 1000),
+            success=success,
+            error_details=error_info,
+            user_id=_user_id,
+            run_id=_run_id,
+            step_id=_step_id,
+            qa_id=_qa_id,
+        )
 
 
 def get_llm(temperature: float = 0.2):
@@ -94,7 +153,7 @@ def get_llm(temperature: float = 0.2):
         ) from e
 
     return ChatOpenAI(
-        model="deepseek-chat",
+        model=_MODEL,
         api_key=DEEPSEEK_API_KEY,
         base_url=DEEPSEEK_BASE_URL,
         temperature=temperature,

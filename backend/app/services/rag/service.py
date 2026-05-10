@@ -2,6 +2,8 @@ import re
 
 from app.schemas.knowledge import RagSource
 from app.services.llm_service import call_deepseek
+from app.core.config import EMBEDDING_MODEL
+from app.services import db_log
 from app.services.rag.chunking import normalize_text, split_text_for_rag
 from app.services.rag.embeddings import embed_texts
 from app.services.rag.repository import (
@@ -54,6 +56,12 @@ def index_document_text(
         summary=summary,
         title=title,
     )
+    if embeddings:
+        db_log.log_embedding_records(
+            storage_doc_id=storage_doc_id,
+            model=EMBEDDING_MODEL,
+            chunk_count=len(chunks),
+        )
     return len(chunks)
 
 
