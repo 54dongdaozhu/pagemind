@@ -34,7 +34,7 @@ export function useKnowledgeExtraction() {
     extractingRef.current = false
   }, [])
 
-  const extractAllChunks = useCallback(async (html) => {
+  const extractAllChunks = useCallback(async (html, docId = null) => {
     if (extractingRef.current) return
     extractingRef.current = true
     const runId = extractionRunRef.current + 1
@@ -60,7 +60,7 @@ export function useKnowledgeExtraction() {
         const chunkId = hashString(text)
 
         try {
-          const data = await extractKnowledge(text, chunkId)
+          const data = await extractKnowledge(text, chunkId, docId, i)
           const kpsWithMeta = (data.knowledge_points || []).map(kp => ({
             ...kp,
             chunkIndex: i,
@@ -73,7 +73,11 @@ export function useKnowledgeExtraction() {
         } catch (err) {
           console.error(`块 ${i} 提取出错:`, err)
           if (extractionRunRef.current === runId) {
-            setExtractError('知识点接口暂时不可用，请确认后端服务已启动并可访问。')
+            if (err?.status === 401) {
+              setExtractError('登录状态已失效，请重新登录后再提取知识点。')
+            } else {
+              setExtractError(err?.message || '知识点接口暂时不可用，请确认后端服务已启动并可访问。')
+            }
           }
         } finally {
           completed += 1

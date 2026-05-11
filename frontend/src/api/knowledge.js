@@ -1,8 +1,13 @@
 import { apiFetch, postJson } from './client'
 
 
-export function extractKnowledge(text, chunkId) {
-  return postJson('/api/extract-knowledge', { text, chunk_id: chunkId })
+export function extractKnowledge(text, chunkId, docId, chunkIndex) {
+  return postJson('/api/extract-knowledge', {
+    text,
+    chunk_id: chunkId,
+    doc_id: docId,
+    chunk_index: chunkIndex,
+  })
 }
 
 

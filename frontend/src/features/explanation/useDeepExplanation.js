@@ -4,6 +4,9 @@ import { requestDeepExplanation } from '../../api/knowledge'
 import { findContextForKP } from '../knowledge/highlightDom'
 
 
+const STREAM_DONE_MARKER = '\n[STREAM_DONE]\n'
+
+
 export function useDeepExplanation(docContentRef) {
   const [deepExplanation, setDeepExplanation] = useState('')
   const [deepLoading, setDeepLoading] = useState(false)
@@ -36,20 +39,48 @@ export function useDeepExplanation(docContentRef) {
     try {
       const response = await requestDeepExplanation(kp, context, controller.signal)
       if (!response.ok) throw new Error(`请求失败: ${response.status}`)
+      if (!response.body) throw new Error('响应不支持流式读取')
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        setDeepExplanation(prev => prev + decoder.decode(value, { stream: true }))
+      let pendingText = ''
+      const appendExplanationChunk = (chunk) => {
+        if (chunk) setDeepExplanation(prev => prev + chunk)
+      }
+      const consumeStreamText = (chunk) => {
+        const text = pendingText + chunk
+        const markerIndex = text.indexOf(STREAM_DONE_MARKER)
+        if (markerIndex !== -1) {
+          appendExplanationChunk(text.slice(0, markerIndex))
+          pendingText = ''
+          return true
+        }
+
+        const keepLength = Math.min(STREAM_DONE_MARKER.length - 1, text.length)
+        appendExplanationChunk(text.slice(0, text.length - keepLength))
+        pendingText = text.slice(text.length - keepLength)
+        return false
+      }
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (consumeStreamText(decoder.decode(value, { stream: true }))) break
+        }
+        consumeStreamText(decoder.decode())
+        appendExplanationChunk(pendingText)
+        pendingText = ''
+      } finally {
+        reader.releaseLock()
       }
     } catch (err) {
       if (err.name !== 'AbortError') {
         setDeepExplanation(prev => prev + `\n\n[错误] ${err.message}`)
       }
     } finally {
-      setDeepLoading(false)
-      deepAbortRef.current = null
+      if (deepAbortRef.current === controller) {
+        setDeepLoading(false)
+        deepAbortRef.current = null
+      }
     }
   }, [docContentRef])
 

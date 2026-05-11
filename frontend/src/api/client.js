@@ -54,7 +54,9 @@ export async function postJson(path, body, options = {}) {
     } catch {
       // ignore non-JSON error responses
     }
-    throw new Error(message)
+    const error = new Error(message)
+    error.status = response.status
+    throw error
   }
 
   return response.json()

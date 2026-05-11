@@ -1,8 +1,28 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import DeepExplanationPanel from '../../explanation/DeepExplanationPanel'
 import KnowledgeList from './KnowledgeList'
 import SelectedKnowledgePanel from './SelectedKnowledgePanel'
 import ChatPanel from '../../chat/ChatPanel'
+
+
+const CHAT_STORAGE_PREFIX = 'ai-study-chat-messages'
+
+
+function loadStoredChatMessages(storageKey) {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      msg =>
+        (msg.role === 'user' || msg.role === 'assistant') &&
+        typeof msg.content === 'string'
+    )
+  } catch {
+    return []
+  }
+}
 
 
 function KnowledgePanel({
@@ -26,8 +46,24 @@ function KnowledgePanel({
   onCardDoubleClick,
 }) {
   const [activeTab, setActiveTab] = useState('knowledge')
-  const [chatMessages, setChatMessages] = useState([])
+  const chatStorageKey = useMemo(
+    () => `${CHAT_STORAGE_PREFIX}:${docId || 'no-document'}`,
+    [docId]
+  )
+  const [chatMessages, setChatMessages] = useState(() => loadStoredChatMessages(chatStorageKey))
   const [chatLoading, setChatLoading] = useState(false)
+
+  useEffect(() => {
+    try {
+      if (chatMessages.length === 0) {
+        localStorage.removeItem(chatStorageKey)
+      } else {
+        localStorage.setItem(chatStorageKey, JSON.stringify(chatMessages))
+      }
+    } catch {
+      // Ignore storage quota or privacy-mode failures; in-memory chat still works.
+    }
+  }, [chatMessages, chatStorageKey])
 
   return (
     <aside className="kp-panel">

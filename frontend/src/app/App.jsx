@@ -115,11 +115,11 @@ function App() {
       extractError: '',
     })
 
-    indexRagDocument(docId, plainText, file.name).catch(err => {
+    await indexRagDocument(docId, plainText, file.name).catch(err => {
       console.error('RAG 索引失败:', err)
     })
 
-    await extractAllChunks(html)
+    await extractAllChunks(html, docId)
   }, [currentUser?.user_id, extractAllChunks])
 
   const {
