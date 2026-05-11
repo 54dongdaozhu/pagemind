@@ -15,7 +15,12 @@ from app.services import db_log
 from app.services.explain_service import stream_deep_explanation
 from app.services.knowledge_service import get_stats, get_status_batch, mark_known, record_click, unmark_known
 from app.services.llm_service import call_deepseek
-from app.services.rag_service import answer_with_rag, get_document_summary, retrieve_relevant_chunks
+from app.services.rag_service import (
+    answer_with_rag,
+    get_document_summary,
+    retrieve_relevant_chunks,
+    summarize_full_document,
+)
 
 
 # ── 工具实现函数 ───────────────────────────────────────────────────────────────
@@ -31,6 +36,10 @@ def _read_document_summary(user_id: str, doc_id: str) -> str:
 def _answer_with_document_context(user_id: str, doc_id: str, question: str, top_k: int = 4):
     reply, sources = answer_with_rag(user_id=user_id, doc_id=doc_id, question=question, top_k=top_k)
     return {"reply": reply, "sources": sources}
+
+
+def _summarize_full_document(user_id: str, doc_id: str, request: str = ""):
+    return summarize_full_document(user_id=user_id, doc_id=doc_id, request=request)
 
 
 def _extract_knowledge_from_chunk(text: str):
@@ -187,6 +196,22 @@ TOOL_REGISTRY: dict[str, AgentTool] = {
         when_to_use="当用户问题是普通文档问答，且不需要额外教学拆解或结构化总结时使用。",
         constraints=["回答必须受限于当前文档上下文。", "复杂学习任务优先拆成检索和 Tutor/Synthesis。"],
         function=_answer_with_document_context,
+    ),
+    "summarize_full_document": AgentTool(
+        name="summarize_full_document",
+        description="按原始 chunk 顺序读取全文，分批整理后合并成覆盖全篇的学习总结或结构素材。",
+        args_schema={
+            "doc_id": {"type": "string", "description": "当前文档 ID。"},
+            "request": {"type": "string", "description": "用户的总结或结构化请求。"},
+        },
+        return_schema={
+            "summary": {"type": "string", "description": "由全文分批整理后合并出的完整摘要。"},
+            "chunk_count": {"type": "integer", "description": "参与整理的全文 chunk 数。"},
+            "batch_count": {"type": "integer", "description": "分批整理次数。"},
+        },
+        when_to_use="用户要求总结全文、提炼全文要点、整理全文笔记、识别全文结构或章节脉络时使用。",
+        constraints=["不做向量或关键词检索，会按文档顺序处理所有已索引 chunk。", "只适合全文级任务，不适合定位型问答。"],
+        function=_summarize_full_document,
     ),
     "extract_knowledge_from_chunk": AgentTool(
         name="extract_knowledge_from_chunk",

@@ -1,6 +1,6 @@
 from typing import List, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -11,9 +11,15 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class AgentChatRequest(BaseModel):
     message: str
     doc_id: str | None = None
+    history: List[ChatMessage] = Field(default_factory=list)
 
 
 class RagIndexRequest(BaseModel):
@@ -54,11 +60,15 @@ class RagQueryResponse(BaseModel):
 class ExtractRequest(BaseModel):
     text: str
     chunk_id: str
+    doc_id: str | None = None
+    chunk_index: int | None = None
 
 
 class ExtractBatchItem(BaseModel):
     text: str
     chunk_id: str
+    doc_id: str | None = None
+    chunk_index: int | None = None
 
 
 class ExtractBatchRequest(BaseModel):

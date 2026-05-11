@@ -6,6 +6,7 @@ from app.services.explain_service import stream_deep_explanation
 
 
 router = APIRouter(prefix="/api", tags=["explain"])
+STREAM_DONE_MARKER = "\n[STREAM_DONE]\n"
 
 
 @router.post("/explain-deep")
@@ -17,5 +18,13 @@ async def explain_deep(request: ExplainDeepRequest):
             context=request.context.strip(),
         ):
             yield chunk
+        yield STREAM_DONE_MARKER
 
-    return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

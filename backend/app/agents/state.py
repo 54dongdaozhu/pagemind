@@ -31,6 +31,7 @@ class LearningAgentState(TypedDict):
     user_id: str
     doc_id: str | None
     message: str
+    history: list[dict[str, str]]
     intent: Intent
     query: str
     summary: str

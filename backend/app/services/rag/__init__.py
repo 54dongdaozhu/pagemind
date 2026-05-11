@@ -5,6 +5,7 @@ from app.services.rag.service import (
     answer_with_rag,
     index_document_text,
     retrieve_relevant_chunks,
+    summarize_full_document,
     summarize_document,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "retrieve_relevant_chunks",
     "scoped_doc_id",
     "split_text_for_rag",
+    "summarize_full_document",
     "summarize_document",
 ]

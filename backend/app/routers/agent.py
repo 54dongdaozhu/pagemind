@@ -28,6 +28,7 @@ def agent_chat(request: AgentChatRequest, current_user: User = Depends(get_curre
             user_id=current_user.user_id,
             message=request.message.strip(),
             doc_id=request.doc_id,
+            history=request.history,
         )
         latency_ms = int((time.monotonic() - start) * 1000)
         db_log.log_qa(
@@ -55,16 +56,23 @@ def agent_chat(request: AgentChatRequest, current_user: User = Depends(get_curre
 
 @router.post("/chat-stream")
 def agent_chat_stream(request: AgentChatRequest, current_user: User = Depends(get_current_user)):
-    user_id_token = db_log.current_user_id.set(current_user.user_id)
-
     def generate():
+        user_id_token = db_log.current_user_id.set(current_user.user_id)
         try:
             yield from stream_learning_agents(
                 user_id=current_user.user_id,
                 message=request.message.strip(),
                 doc_id=request.doc_id,
+                history=request.history,
             )
         finally:
             db_log.current_user_id.reset(user_id_token)
 
-    return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
