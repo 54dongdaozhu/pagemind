@@ -6,14 +6,19 @@ actual decision-making is delegated to the agent workflow:
 KnowledgeDiscoveryAgent -> KnowledgeFilterAgent -> KnowledgeRankAgent.
 """
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import BoundedSemaphore, RLock
 
+from sqlalchemy import select
+
 from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items
 from app.core.config import EXTRACT_MAX_CONCURRENCY
-from app.core.database import ExtractCache, get_db
+from app.core.database import ChunkKnowledgePoint, ExtractCache, KnowledgePoint as KnowledgePointRow, RagChunk, get_db
 from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
+from app.services import db_log
+from app.services.rag.repository import scoped_doc_id
 
 
 logger = logging.getLogger(__name__)
@@ -77,18 +82,100 @@ def _save_to_cache(cache_key: str, knowledge_points: list[KnowledgePoint]):
             db.commit()
 
 
-def extract_knowledge_from_text(user_id: str, chunk_id: str, text: str) -> ExtractResponse:
+def _upsert_extracted_knowledge_points(
+    user_id: str,
+    chunk_id: str,
+    knowledge_points: list[KnowledgePoint],
+    doc_id: str | None = None,
+    chunk_index: int | None = None,
+) -> None:
+    if not knowledge_points:
+        return
+
+    now = datetime.now(timezone.utc)
+    storage_doc_id = scoped_doc_id(user_id, doc_id) if doc_id else None
+    with _extract_db_lock:
+        with get_db() as db:
+            resolved_chunk_index = _resolve_chunk_index(db, storage_doc_id, chunk_index) if storage_doc_id else None
+            for item in knowledge_points:
+                row = db.execute(
+                    select(KnowledgePointRow).where(KnowledgePointRow.kp_text == item.text)
+                ).scalar_one_or_none()
+                if row is None:
+                    kp_id = uuid.uuid4().hex
+                    db.add(KnowledgePointRow(
+                        kp_id=kp_id,
+                        kp_text=item.text,
+                        kp_type=item.type,
+                        explanation=item.explanation,
+                        importance=item.importance,
+                        created_at=now,
+                        updated_at=now,
+                    ))
+                else:
+                    kp_id = row.kp_id
+                    row.kp_type = item.type
+                    row.explanation = item.explanation
+                    row.importance = item.importance
+                    row.updated_at = now
+
+                if storage_doc_id is not None and resolved_chunk_index is not None:
+                    existing_link = db.get(
+                        ChunkKnowledgePoint,
+                        (storage_doc_id, resolved_chunk_index, kp_id),
+                    )
+                    if existing_link is None:
+                        db.add(ChunkKnowledgePoint(
+                            doc_id=storage_doc_id,
+                            chunk_index=resolved_chunk_index,
+                            kp_id=kp_id,
+                            confidence=_confidence_for_importance(item.importance),
+                            created_at=now,
+                        ))
+                    else:
+                        existing_link.confidence = _confidence_for_importance(item.importance)
+            db.commit()
+
+    db_log.log_event(
+        entity_type="extract_cache",
+        entity_id=chunk_id,
+        event_type="knowledge.extracted",
+        user_id=user_id,
+        after_state={"knowledge_count": len(knowledge_points), "doc_id": doc_id, "chunk_index": chunk_index},
+    )
+
+
+def _resolve_chunk_index(db, storage_doc_id: str | None, chunk_index: int | None) -> int | None:
+    if storage_doc_id is None or chunk_index is None:
+        return None
+    return chunk_index if db.get(RagChunk, (storage_doc_id, chunk_index)) is not None else None
+
+
+def _confidence_for_importance(importance: str) -> float:
+    return 0.95 if importance == "high" else 0.75
+
+
+def extract_knowledge_from_text(
+    user_id: str,
+    chunk_id: str,
+    text: str,
+    doc_id: str | None = None,
+    chunk_index: int | None = None,
+) -> ExtractResponse:
     text = text.strip()
     cache_key = _scoped_chunk_id(user_id, chunk_id)
 
     with _extract_cache_lock:
         if cache_key in _extract_cache:
-            return ExtractResponse(chunk_id=chunk_id, knowledge_points=_extract_cache[cache_key])
+            cached_points = _extract_cache[cache_key]
+            _upsert_extracted_knowledge_points(user_id, chunk_id, cached_points, doc_id, chunk_index)
+            return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached_points)
 
     cached = _load_from_cache(cache_key, text)
     if cached is not None:
         with _extract_cache_lock:
             _extract_cache[cache_key] = cached
+        _upsert_extracted_knowledge_points(user_id, chunk_id, cached, doc_id, chunk_index)
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached)
 
     if len(text) < 30:
@@ -105,6 +192,7 @@ def extract_knowledge_from_text(user_id: str, chunk_id: str, text: str) -> Extra
     with _extract_cache_lock:
         _extract_cache[cache_key] = knowledge_points
     _save_to_cache(cache_key, knowledge_points)
+    _upsert_extracted_knowledge_points(user_id, chunk_id, knowledge_points, doc_id, chunk_index)
 
     return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
 
@@ -117,7 +205,13 @@ def extract_knowledge_batch(user_id: str, chunks: list[ExtractBatchItem]) -> Ext
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(
             executor.map(
-                lambda chunk: extract_knowledge_from_text(user_id, chunk.chunk_id, chunk.text),
+                lambda chunk: extract_knowledge_from_text(
+                    user_id,
+                    chunk.chunk_id,
+                    chunk.text,
+                    doc_id=chunk.doc_id,
+                    chunk_index=chunk.chunk_index,
+                ),
                 chunks,
             )
         )

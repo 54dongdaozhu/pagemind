@@ -11,7 +11,13 @@ router = APIRouter(prefix="/api", tags=["extract"])
 
 @router.post("/extract-knowledge", response_model=ExtractResponse)
 def extract_knowledge(request: ExtractRequest, current_user: User = Depends(get_current_user)):
-    return extract_knowledge_from_text(current_user.user_id, request.chunk_id, request.text)
+    return extract_knowledge_from_text(
+        current_user.user_id,
+        request.chunk_id,
+        request.text,
+        doc_id=request.doc_id,
+        chunk_index=request.chunk_index,
+    )
 
 
 @router.post("/extract-knowledge-batch", response_model=ExtractBatchResponse)

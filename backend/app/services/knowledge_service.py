@@ -60,6 +60,7 @@ def _write_status_history(
 
 
 def record_click(user_id: str, kp_text: str, kp_type: str):
+    from app.services import db_log
     now = datetime.now(timezone.utc)
 
     with get_db() as db:
@@ -120,10 +121,18 @@ def record_click(user_id: str, kp_text: str, kp_type: str):
 
         db.commit()
 
+    db_log.log_event(
+        entity_type="study_record",
+        entity_id=record.record_id,
+        event_type="kp.clicked",
+        user_id=user_id,
+        after_state={"kp_text": kp_text, "status": new_status, "click_count": new_count},
+    )
     return {"kp_text": kp_text, "status": new_status, "click_count": new_count}
 
 
 def mark_known(user_id: str, kp_text: str, kp_type: str):
+    from app.services import db_log
     now = datetime.now(timezone.utc)
 
     with get_db() as db:
@@ -172,10 +181,18 @@ def mark_known(user_id: str, kp_text: str, kp_type: str):
 
         db.commit()
 
+    db_log.log_event(
+        entity_type="study_record",
+        entity_id=record.record_id,
+        event_type="kp.marked_known",
+        user_id=user_id,
+        after_state={"kp_text": kp_text, "status": STATUS_KNOWN},
+    )
     return {"kp_text": kp_text, "status": STATUS_KNOWN}
 
 
 def unmark_known(user_id: str, kp_text: str):
+    from app.services import db_log
     now = datetime.now(timezone.utc)
     with get_db() as db:
         record = db.execute(
@@ -203,6 +220,13 @@ def unmark_known(user_id: str, kp_text: str):
 
         db.commit()
 
+    db_log.log_event(
+        entity_type="study_record",
+        entity_id=record.record_id,
+        event_type="kp.unmarked_known",
+        user_id=user_id,
+        after_state={"kp_text": kp_text, "status": new_status},
+    )
     return {"kp_text": kp_text, "status": new_status}
 
 

@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+import hashlib
+import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
-from app.core.database import RagChunk, RagDocument, get_db
+from app.core.database import DocumentVersion, RagChunk, RagDocument, get_db
 
 
 def scoped_doc_id(user_id: str, doc_id: str) -> str:
@@ -19,23 +21,52 @@ def save_indexed_document(
 ) -> None:
     now = datetime.now(timezone.utc)
     storage_doc_id = scoped_doc_id(user_id, doc_id)
+    raw_text = "\n\n".join(chunks)
+    content_hash = _hash_text(raw_text)
     with get_db() as db:
+        document = db.get(RagDocument, storage_doc_id)
+        current_version = (
+            db.get(DocumentVersion, document.current_version_id)
+            if document is not None and document.current_version_id
+            else None
+        )
+        if current_version is not None and current_version.content_hash == content_hash:
+            version_id = current_version.version_id
+        else:
+            max_version = db.execute(
+                select(func.max(DocumentVersion.version_number))
+                .where(DocumentVersion.doc_id == storage_doc_id)
+            ).scalar_one()
+            version_id = uuid.uuid4().hex
+            db.add(
+                DocumentVersion(
+                    version_id=version_id,
+                    doc_id=storage_doc_id,
+                    version_number=(max_version or 0) + 1,
+                    source_name=title,
+                    content_hash=content_hash,
+                    raw_text=raw_text,
+                    created_at=now,
+                )
+            )
+
         db.execute(delete(RagChunk).where(RagChunk.doc_id == storage_doc_id))
         db.add_all(
             [
                 RagChunk(
                     doc_id=storage_doc_id,
                     chunk_index=idx,
+                    version_id=version_id,
                     content=content,
                     # embedding_json 字段为 JSON 类型，直接传 list，无需 json.dumps
                     embedding_json=embeddings[idx] if embeddings and idx < len(embeddings) else None,
+                    content_hash=_hash_text(content),
                     created_at=now,
                 )
                 for idx, content in enumerate(chunks)
             ]
         )
 
-        document = db.get(RagDocument, storage_doc_id)
         if document is None:
             db.add(
                 RagDocument(
@@ -44,6 +75,7 @@ def save_indexed_document(
                     title=title,
                     summary=summary,
                     chunk_count=len(chunks),
+                    current_version_id=version_id,
                     created_at=now,
                     updated_at=now,
                 )
@@ -53,6 +85,7 @@ def save_indexed_document(
             document.title = title
             document.summary = summary
             document.chunk_count = len(chunks)
+            document.current_version_id = version_id
             document.updated_at = now
 
         db.commit()
@@ -82,3 +115,7 @@ def list_document_chunks(user_id: str, doc_id: str):
             }
             for chunk in chunks
         ]
+
+
+def _hash_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()

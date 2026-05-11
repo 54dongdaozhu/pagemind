@@ -24,6 +24,7 @@ from app.core.database import (
     LLMCallLog,
     QARecord,
     QAReference,
+    ReviewRecord,
     ToolCallLog,
     WorkflowRun,
     WorkflowStep,
@@ -443,4 +444,49 @@ def _write_embedding_records(*, storage_doc_id, model, chunk_count):
             )
             for i in range(chunk_count)
         ])
+        db.commit()
+
+
+# ── Review records ────────────────────────────────────────────────────────────
+
+def log_review_records(
+    *,
+    user_id: str,
+    doc_id: str | None = None,
+    review_items: list | None = None,
+    review_type: str = "agent_schedule",
+) -> None:
+    _submit(
+        _write_review_records,
+        user_id=user_id,
+        doc_id=doc_id,
+        review_items=review_items or [],
+        review_type=review_type,
+    )
+
+
+def _write_review_records(*, user_id, doc_id, review_items, review_type):
+    now = datetime.now(timezone.utc)
+    rows = []
+    for item in review_items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("kp_text") or "").strip()
+        if not text:
+            continue
+        rows.append(ReviewRecord(
+            review_id=uuid.uuid4().hex,
+            user_id=user_id,
+            doc_id=doc_id,
+            kp_text=text,
+            review_type=review_type,
+            result=item.get("priority"),
+            note=item.get("reason") or item.get("next_action"),
+            reviewed_at=now,
+            created_at=now,
+        ))
+    if not rows:
+        return
+    with get_db() as db:
+        db.add_all(rows)
         db.commit()

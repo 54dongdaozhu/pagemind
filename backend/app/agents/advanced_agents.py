@@ -1,5 +1,6 @@
 from app.agents.state import LearningAgentState
 from app.agents.tool_registry import call_tool
+from app.services import db_log
 
 
 def document_structure_agent(state: LearningAgentState) -> dict:
@@ -61,6 +62,11 @@ def reflection_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
     stats = call_tool("get_learning_stats", user_id=state["user_id"])
     result = call_tool("schedule_review", context=context, learning_stats=stats, knowledge_status=[])
+    db_log.log_review_records(
+        user_id=state["user_id"],
+        doc_id=state["doc_id"],
+        review_items=result.get("review_items") or [],
+    )
     return {
         "answer": _format_review_answer(result),
         "active_agent": "ReflectionAgent",
