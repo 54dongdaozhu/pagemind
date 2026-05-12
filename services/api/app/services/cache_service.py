@@ -49,6 +49,17 @@ def get_json(key: str) -> Any | None:
         return None
 
 
+def get_json_many(keys: list[str]) -> list[Any | None]:
+    if not keys:
+        return []
+    try:
+        values = get_redis().mget(keys)
+        return [json.loads(raw) if raw is not None else None for raw in values]
+    except Exception as exc:
+        logger.debug("Redis JSON cache batch read failed for %s keys: %s", len(keys), exc)
+        return [None] * len(keys)
+
+
 def set_json(key: str, value: Any, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> bool:
     try:
         get_redis().setex(
@@ -59,6 +70,24 @@ def set_json(key: str, value: Any, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> bo
         return True
     except Exception as exc:
         logger.debug("Redis JSON cache write failed for %s: %s", key, exc)
+        return False
+
+
+def set_json_many(items: dict[str, Any], ttl_seconds: int = DEFAULT_TTL_SECONDS) -> bool:
+    if not items:
+        return True
+    try:
+        pipe = get_redis().pipeline(transaction=False)
+        for key, value in items.items():
+            pipe.setex(
+                key,
+                ttl_seconds,
+                json.dumps(value, ensure_ascii=False, separators=(",", ":")),
+            )
+        pipe.execute()
+        return True
+    except Exception as exc:
+        logger.debug("Redis JSON cache batch write failed for %s keys: %s", len(items), exc)
         return False
 
 

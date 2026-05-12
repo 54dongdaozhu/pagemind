@@ -3,7 +3,7 @@ import logging
 import requests
 
 from app.core.config import EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL
-from app.services.cache_service import EMBEDDING_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
+from app.services.cache_service import EMBEDDING_CACHE_TTL_SECONDS, get_json_many, set_json_many, stable_hash
 from app.services.llm_service import REQUEST_PROXIES
 
 
@@ -23,7 +23,7 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         f"cache:embedding:{EMBEDDING_MODEL}:{stable_hash(text)}"
         for text in cleaned
     ]
-    cached_embeddings = [get_json(key) for key in keys]
+    cached_embeddings = get_json_many(keys)
     missing_indexes = [idx for idx, value in enumerate(cached_embeddings) if value is None]
     if not missing_indexes:
         if any(value is None for value in cached_embeddings):
@@ -67,9 +67,11 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         items = data.get("data", [])
         ordered = sorted(items, key=lambda item: item.get("index", 0))
         embeddings = [item["embedding"] for item in ordered]
+        embeddings_to_cache = {}
         for original_idx, embedding in zip(missing_indexes, embeddings):
             cached_embeddings[original_idx] = embedding
-            set_json(keys[original_idx], embedding, EMBEDDING_CACHE_TTL_SECONDS)
+            embeddings_to_cache[keys[original_idx]] = embedding
+        set_json_many(embeddings_to_cache, EMBEDDING_CACHE_TTL_SECONDS)
         logger.info(
             "Embedding request succeeded: input_count=%s embedding_count=%s dimension=%s",
             len(missing_texts),
