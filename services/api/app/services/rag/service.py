@@ -3,6 +3,7 @@ import re
 from app.schemas.knowledge import RagSource
 from app.services.llm_service import call_deepseek
 from app.core.config import EMBEDDING_MODEL
+from app.services.cache_service import RAG_QUERY_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
 from app.services import db_log
 from app.services.rag.chunking import normalize_text, split_text_for_rag
 from app.services.rag.embeddings import embed_texts
@@ -102,13 +103,21 @@ def summarize_document(text: str) -> str:
 
 def retrieve_relevant_chunks(user_id: str, doc_id: str, question: str, top_k: int = 3) -> list[RagSource]:
     top_k = max(1, min(top_k, 8))
+    cache_key = f"cache:rag_query:{stable_hash({'user_id': user_id, 'doc_id': doc_id, 'question': question, 'top_k': top_k})}"
+    cached = get_json(cache_key)
+    if cached is not None:
+        return [RagSource(**item) for item in cached]
+
     storage_doc_id = scoped_doc_id(user_id, doc_id)
     chroma_results = retrieve_by_chroma(storage_doc_id, question, top_k)
     if chroma_results:
+        set_json(cache_key, [_source_to_dict(item) for item in chroma_results], RAG_QUERY_CACHE_TTL_SECONDS)
         return chroma_results
 
     rows = list_document_chunks(user_id, doc_id)
-    return _retrieve_by_keyword(rows, question, top_k)
+    sources = _retrieve_by_keyword(rows, question, top_k)
+    set_json(cache_key, [_source_to_dict(item) for item in sources], RAG_QUERY_CACHE_TTL_SECONDS)
+    return sources
 
 
 def summarize_full_document(user_id: str, doc_id: str, request: str = "") -> dict:
@@ -268,6 +277,17 @@ def _extract_terms(text: str) -> list[str]:
             for idx in range(0, max(len(part) - size + 1, 0)):
                 terms.add(part[idx:idx + size])
     return sorted(terms, key=len, reverse=True)
+
+
+def _source_to_dict(source: RagSource) -> dict:
+    if hasattr(source, "model_dump"):
+        return source.model_dump()
+    return {
+        "chunk_index": source.chunk_index,
+        "content": source.content,
+        "score": source.score,
+        "retrieval_method": source.retrieval_method,
+    }
 
 
 def _term_weight(term: str) -> float:

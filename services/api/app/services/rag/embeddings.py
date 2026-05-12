@@ -3,6 +3,7 @@ import logging
 import requests
 
 from app.core.config import EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL
+from app.services.cache_service import EMBEDDING_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
 from app.services.llm_service import REQUEST_PROXIES
 
 
@@ -18,6 +19,19 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
     if not cleaned:
         return []
 
+    keys = [
+        f"cache:embedding:{EMBEDDING_MODEL}:{stable_hash(text)}"
+        for text in cleaned
+    ]
+    cached_embeddings = [get_json(key) for key in keys]
+    missing_indexes = [idx for idx, value in enumerate(cached_embeddings) if value is None]
+    if not missing_indexes:
+        if any(value is None for value in cached_embeddings):
+            return None
+        return cached_embeddings
+
+    missing_texts = [cleaned[idx] for idx in missing_indexes]
+
     url = f"{EMBEDDING_BASE_URL.rstrip('/')}/embeddings"
     headers = {
         "Content-Type": "application/json",
@@ -25,7 +39,7 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
     }
     payload = {
         "model": EMBEDDING_MODEL,
-        "input": cleaned,
+        "input": missing_texts,
     }
 
     try:
@@ -33,7 +47,7 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
             "Requesting embeddings: url=%s model=%s input_count=%s",
             url,
             EMBEDDING_MODEL,
-            len(cleaned),
+            len(missing_texts),
         )
         response = requests.post(
             url,
@@ -53,13 +67,16 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         items = data.get("data", [])
         ordered = sorted(items, key=lambda item: item.get("index", 0))
         embeddings = [item["embedding"] for item in ordered]
+        for original_idx, embedding in zip(missing_indexes, embeddings):
+            cached_embeddings[original_idx] = embedding
+            set_json(keys[original_idx], embedding, EMBEDDING_CACHE_TTL_SECONDS)
         logger.info(
             "Embedding request succeeded: input_count=%s embedding_count=%s dimension=%s",
-            len(cleaned),
-            len(embeddings),
-            len(embeddings[0]) if embeddings else 0,
+            len(missing_texts),
+            len(cached_embeddings),
+            len(cached_embeddings[0]) if cached_embeddings else 0,
         )
-        return embeddings
+        return cached_embeddings
     except Exception as exc:
         logger.exception("Embedding request exception: %s", exc)
         return None

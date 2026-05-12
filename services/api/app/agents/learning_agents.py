@@ -88,7 +88,6 @@ def retrieval_agent(state: LearningAgentState) -> dict:
             "stop_reason": "full_document_summarized",
         }
 
-    summary = call_tool("read_document_summary", user_id=state["user_id"], doc_id=state["doc_id"])
     sources = call_tool(
         "search_document_chunks",
         user_id=state["user_id"],
@@ -96,6 +95,15 @@ def retrieval_agent(state: LearningAgentState) -> dict:
         query=state["query"],
         top_k=5,
     )
+    if state["intent"] in {"qa", "explain"}:
+        return {
+            "summary": "",
+            "sources": sources,
+            "tools_used": [*state["tools_used"], "search_document_chunks"],
+            "stop_reason": "retrieved",
+        }
+
+    summary = call_tool("read_document_summary", user_id=state["user_id"], doc_id=state["doc_id"])
     return {
         "summary": summary,
         "sources": sources,

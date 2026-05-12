@@ -5,6 +5,7 @@ import requests
 from fastapi import HTTPException
 
 from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+from app.services.cache_service import PROMPT_CACHE_TTL_SECONDS, get_text, set_text, stable_hash
 from app.services import db_log
 
 
@@ -20,6 +21,11 @@ def call_deepseek(
     json_mode: bool = False,
     purpose: str | None = None,
 ) -> str:
+    cache_key = f"cache:prompt:{stable_hash({'model': _MODEL, 'messages': messages, 'temperature': temperature, 'json_mode': json_mode})}"
+    cached = get_text(cache_key)
+    if cached is not None:
+        return cached
+
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -56,6 +62,7 @@ def call_deepseek(
             latency_ms=int((time.monotonic() - start) * 1000),
             success=True,
         )
+        set_text(cache_key, content, PROMPT_CACHE_TTL_SECONDS)
         return content
     except requests.exceptions.RequestException as e:
         db_log.log_llm_call(
@@ -76,6 +83,12 @@ def call_deepseek_stream(
     temperature: float = 0.5,
     purpose: str | None = None,
 ):
+    cache_key = f"cache:prompt:{stable_hash({'model': _MODEL, 'messages': messages, 'temperature': temperature, 'stream': True})}"
+    cached = get_text(cache_key)
+    if cached is not None:
+        yield cached
+        return
+
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -97,6 +110,7 @@ def call_deepseek_stream(
     start = time.monotonic()
     success = True
     error_info = None
+    answer_parts = []
     try:
         with requests.post(
             url,
@@ -121,6 +135,7 @@ def call_deepseek_stream(
                     delta = data["choices"][0].get("delta", {})
                     content = delta.get("content", "")
                     if content:
+                        answer_parts.append(content)
                         yield content
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
@@ -141,6 +156,8 @@ def call_deepseek_stream(
             step_id=_step_id,
             qa_id=_qa_id,
         )
+        if success and answer_parts:
+            set_text(cache_key, "".join(answer_parts), PROMPT_CACHE_TTL_SECONDS)
 
 
 def get_llm(temperature: float = 0.2):

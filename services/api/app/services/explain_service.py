@@ -1,4 +1,10 @@
 from app.services.llm_service import call_deepseek_stream
+from app.services.cache_service import (
+    ANALYSIS_REPORT_CACHE_TTL_SECONDS,
+    get_text,
+    set_text,
+    stable_hash,
+)
 
 
 EXPLAIN_DEEP_SYSTEM_PROMPT = """你是一位专业、耐心的文档讲解助手。你的任务是为用户深入讲解文档中的某个知识点,帮助他们真正理解并能在实际阅读、工作或研究中应用。
@@ -15,6 +21,12 @@ EXPLAIN_DEEP_SYSTEM_PROMPT = """你是一位专业、耐心的文档讲解助手
 
 
 def stream_deep_explanation(keyword: str, kp_type: str, context: str):
+    cache_key = f"cache:analysis_report:deep_explain:{stable_hash({'keyword': keyword, 'kp_type': kp_type, 'context': context})}"
+    cached = get_text(cache_key)
+    if cached is not None:
+        yield cached
+        return
+
     type_label = "公式/定理" if kp_type == "formula" else "术语/概念"
     user_message = f"""用户在阅读文档时点击了一个{type_label}:「{keyword}」
 
@@ -30,4 +42,10 @@ def stream_deep_explanation(keyword: str, kp_type: str, context: str):
         {"role": "user", "content": user_message},
     ]
 
-    yield from call_deepseek_stream(messages, temperature=0.5)
+    parts = []
+    for chunk in call_deepseek_stream(messages, temperature=0.5):
+        parts.append(chunk)
+        yield chunk
+    answer = "".join(parts)
+    if answer:
+        set_text(cache_key, answer, ANALYSIS_REPORT_CACHE_TTL_SECONDS)

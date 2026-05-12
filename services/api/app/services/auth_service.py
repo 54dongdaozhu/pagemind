@@ -18,6 +18,7 @@ from app.core.config import (
     BUILTIN_USERNAME,
 )
 from app.core.database import User, get_db
+from app.services.cache_service import USER_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
 
 
 security = HTTPBearer(auto_error=False)
@@ -184,13 +185,33 @@ def ensure_builtin_user() -> None:
 def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> User:
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
-    payload = decode_access_token(credentials.credentials)
+    token = credentials.credentials
+    payload = decode_access_token(token)
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的登录凭证")
+
+    cache_key = f"cache:user_auth:{stable_hash(token)}"
+    cached = get_json(cache_key)
+    if cached is not None and cached.get("user_id") == user_id:
+        return User(
+            user_id=cached["user_id"],
+            username=cached.get("username"),
+            email=cached.get("email"),
+            password_hash=cached.get("password_hash"),
+            created_at=None,
+            updated_at=None,
+        )
 
     with get_db() as db:
         user = db.get(User, user_id)
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+        cached_user = {
+            "user_id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+            "password_hash": user.password_hash,
+        }
+        set_json(cache_key, cached_user, USER_CACHE_TTL_SECONDS)
         return user
