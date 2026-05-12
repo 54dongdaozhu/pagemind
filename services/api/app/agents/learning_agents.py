@@ -30,6 +30,15 @@ _COMPLEX_AGENT_MAP = {
     "review": reflection_agent,
 }
 
+# 复杂 agent 在等待 LLM 响应期间立刻向用户展示的状态提示
+_COMPLEX_AGENT_STATUS = {
+    "practice": "正在根据文档内容生成练习题...\n\n",
+    "grade": "正在批改答案...\n\n",
+    "relation": "正在分析知识点之间的关系...\n\n",
+    "structure": "正在解析文档结构...\n\n",
+    "review": "正在生成复习计划...\n\n",
+}
+
 
 # ── 基础 agent 函数 ────────────────────────────────────────────────────────────
 
@@ -40,6 +49,10 @@ def supervisor_agent(message: str, doc_id: str | None, history: list[dict[str, s
             "query": message,
             "active_agent": "SupervisorAgent",
         }
+
+    heuristic = _heuristic_supervisor(message)
+    if heuristic["intent"] != "qa":
+        return heuristic
 
     user_content = _format_supervisor_input(message, history or [])
     messages = [
@@ -62,7 +75,7 @@ def supervisor_agent(message: str, doc_id: str | None, history: list[dict[str, s
         }
     except Exception as e:
         logger.exception("[SupervisorAgent] failed, using heuristic intent: %s", e)
-        return _heuristic_supervisor(message)
+        return heuristic
 
 
 def retrieval_agent(state: LearningAgentState) -> dict:
@@ -75,6 +88,18 @@ def retrieval_agent(state: LearningAgentState) -> dict:
         }
 
     if state["intent"] in {"summarize", "structure"}:
+        cached_summary = call_tool(
+            "read_document_summary",
+            user_id=state["user_id"],
+            doc_id=state["doc_id"],
+        )
+        if cached_summary:
+            return {
+                "summary": cached_summary,
+                "sources": [],
+                "tools_used": [*state["tools_used"], "read_document_summary"],
+                "stop_reason": "retrieved",
+            }
         result = call_tool(
             "summarize_full_document",
             user_id=state["user_id"],
@@ -355,6 +380,7 @@ def stream_learning_agents(
         try:
             agent_fn = _COMPLEX_AGENT_MAP.get(state["intent"])
             if agent_fn:
+                yield _COMPLEX_AGENT_STATUS.get(state["intent"], "正在处理...\n\n")
                 state.update(agent_fn(state))
                 yield state["answer"]
             else:
