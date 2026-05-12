@@ -42,6 +42,11 @@ def _summarize_full_document(user_id: str, doc_id: str, request: str = ""):
     return summarize_full_document(user_id=user_id, doc_id=doc_id, request=request)
 
 
+def _count_term_occurrences(term: str, text: str) -> dict:
+    count = text.count(term)
+    return {"term": term, "count": count, "present": count > 0}
+
+
 def _extract_knowledge_from_chunk(text: str):
     return {"knowledge_points": discover_knowledge_points(text)}
 
@@ -212,6 +217,22 @@ TOOL_REGISTRY: dict[str, AgentTool] = {
         when_to_use="用户要求总结全文、提炼全文要点、整理全文笔记、识别全文结构或章节脉络时使用。",
         constraints=["不做向量或关键词检索，会按文档顺序处理所有已索引 chunk。", "只适合全文级任务，不适合定位型问答。"],
         function=_summarize_full_document,
+    ),
+    "count_term_occurrences": AgentTool(
+        name="count_term_occurrences",
+        description="统计某个术语或词组在给定文本中出现的次数，用于验证知识点是否真实存在于原文。",
+        args_schema={
+            "term": {"type": "string", "description": "要统计的术语或词组。"},
+            "text": {"type": "string", "description": "被搜索的原文文本。"},
+        },
+        return_schema={
+            "term": {"type": "string"},
+            "count": {"type": "integer", "description": "出现次数。"},
+            "present": {"type": "boolean", "description": "是否至少出现一次。"},
+        },
+        when_to_use="需要验证某个知识点的 text 是否真实出现在原文中，或统计其出现频率时使用。",
+        constraints=["精确字符串匹配，区分大小写。", "不做语义搜索。"],
+        function=_count_term_occurrences,
     ),
     "extract_knowledge_from_chunk": AgentTool(
         name="extract_knowledge_from_chunk",

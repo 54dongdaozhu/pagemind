@@ -13,6 +13,18 @@ class KnowledgeAgentState(TypedDict):
     stop_reason: str
 
 
+class DocumentKPState(TypedDict):
+    doc_id: str
+    user_id: str
+    all_chunk_kps: list[dict]      # 所有 chunk 的原始 KPs（带 chunk_id 字段）
+    global_registry: dict          # text → KP，跨块去重记忆
+    deduped_kps: list[dict]        # CrossChunkDedup 输出
+    doc_summary: str               # DocImportance 从工具读取的文档摘要
+    scored_kps: list[dict]         # DocImportance 输出
+    verified_kps: list[dict]       # RAGVerify 输出
+    stop_reason: str
+
+
 Intent = Literal[
     "qa",
     "explain",
