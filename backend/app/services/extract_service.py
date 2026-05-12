@@ -9,7 +9,8 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from threading import BoundedSemaphore, RLock
+from threading import BoundedSemaphore, Lock, RLock
+from typing import Any, Protocol
 
 from sqlalchemy import select
 
@@ -32,6 +33,28 @@ _llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
 _CACHE_TTL_DAYS = 7
 
 
+class PersistTaskScheduler(Protocol):
+    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> None:
+        ...
+
+
+class _PersistTaskCollector:
+    def __init__(self):
+        self._lock = Lock()
+        self._tasks: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> None:
+        with self._lock:
+            self._tasks.append((func, args, kwargs))
+
+    def flush_to(self, scheduler: PersistTaskScheduler) -> None:
+        with self._lock:
+            tasks = list(self._tasks)
+            self._tasks.clear()
+        for func, args, kwargs in tasks:
+            scheduler.add_task(func, *args, **kwargs)
+
+
 def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint]:
     finalized = finalize_knowledge_items(kps_data, text)
     return [KnowledgePoint(**kp) for kp in finalized]
@@ -49,8 +72,11 @@ def _load_from_cache(cache_key: str, text: str) -> list[KnowledgePoint] | None:
     if cache is None:
         return None
 
-    # 检查 TTL：expired_at 存在且已过期，视为缓存失效
-    if cache.expired_at is not None and cache.expired_at < now:
+    # 检查 TTL：SQLite 会丢失 timezone 信息，比较前统一按 UTC 处理。
+    expired_at = cache.expired_at
+    if expired_at is not None and expired_at.tzinfo is None:
+        expired_at = expired_at.replace(tzinfo=timezone.utc)
+    if expired_at is not None and expired_at < now:
         return None
 
     # result 字段已是 JSON 类型，SQLAlchemy 自动反序列化为 list/dict
@@ -155,12 +181,47 @@ def _confidence_for_importance(importance: str) -> float:
     return 0.95 if importance == "high" else 0.75
 
 
+def _persist_extraction_result(
+    user_id: str,
+    chunk_id: str,
+    cache_key: str,
+    knowledge_points: list[KnowledgePoint],
+    doc_id: str | None = None,
+    chunk_index: int | None = None,
+    save_cache: bool = False,
+) -> None:
+    try:
+        if save_cache:
+            _save_to_cache(cache_key, knowledge_points)
+        _upsert_extracted_knowledge_points(user_id, chunk_id, knowledge_points, doc_id, chunk_index)
+    except Exception as e:
+        logger.exception("Persisting extracted knowledge failed for chunk %s: %s", chunk_id, e)
+
+
+def _persist_or_schedule(
+    scheduler: PersistTaskScheduler | None,
+    user_id: str,
+    chunk_id: str,
+    cache_key: str,
+    knowledge_points: list[KnowledgePoint],
+    doc_id: str | None = None,
+    chunk_index: int | None = None,
+    save_cache: bool = False,
+) -> None:
+    args = (user_id, chunk_id, cache_key, knowledge_points, doc_id, chunk_index, save_cache)
+    if scheduler is None:
+        _persist_extraction_result(*args)
+        return
+    scheduler.add_task(_persist_extraction_result, *args)
+
+
 def extract_knowledge_from_text(
     user_id: str,
     chunk_id: str,
     text: str,
     doc_id: str | None = None,
     chunk_index: int | None = None,
+    background_tasks: PersistTaskScheduler | None = None,
 ) -> ExtractResponse:
     text = text.strip()
     cache_key = _scoped_chunk_id(user_id, chunk_id)
@@ -168,14 +229,30 @@ def extract_knowledge_from_text(
     with _extract_cache_lock:
         if cache_key in _extract_cache:
             cached_points = _extract_cache[cache_key]
-            _upsert_extracted_knowledge_points(user_id, chunk_id, cached_points, doc_id, chunk_index)
+            _persist_or_schedule(
+                background_tasks,
+                user_id,
+                chunk_id,
+                cache_key,
+                cached_points,
+                doc_id,
+                chunk_index,
+            )
             return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached_points)
 
     cached = _load_from_cache(cache_key, text)
     if cached is not None:
         with _extract_cache_lock:
             _extract_cache[cache_key] = cached
-        _upsert_extracted_knowledge_points(user_id, chunk_id, cached, doc_id, chunk_index)
+        _persist_or_schedule(
+            background_tasks,
+            user_id,
+            chunk_id,
+            cache_key,
+            cached,
+            doc_id,
+            chunk_index,
+        )
         return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached)
 
     if len(text) < 30:
@@ -191,16 +268,29 @@ def extract_knowledge_from_text(
 
     with _extract_cache_lock:
         _extract_cache[cache_key] = knowledge_points
-    _save_to_cache(cache_key, knowledge_points)
-    _upsert_extracted_knowledge_points(user_id, chunk_id, knowledge_points, doc_id, chunk_index)
+    _persist_or_schedule(
+        background_tasks,
+        user_id,
+        chunk_id,
+        cache_key,
+        knowledge_points,
+        doc_id,
+        chunk_index,
+        save_cache=True,
+    )
 
     return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
 
 
-def extract_knowledge_batch(user_id: str, chunks: list[ExtractBatchItem]) -> ExtractBatchResponse:
+def extract_knowledge_batch(
+    user_id: str,
+    chunks: list[ExtractBatchItem],
+    background_tasks: PersistTaskScheduler | None = None,
+) -> ExtractBatchResponse:
     if not chunks:
         return ExtractBatchResponse(results=[])
 
+    task_scheduler = _PersistTaskCollector() if background_tasks is not None else None
     max_workers = min(EXTRACT_MAX_CONCURRENCY, len(chunks))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(
@@ -211,9 +301,13 @@ def extract_knowledge_batch(user_id: str, chunks: list[ExtractBatchItem]) -> Ext
                     chunk.text,
                     doc_id=chunk.doc_id,
                     chunk_index=chunk.chunk_index,
+                    background_tasks=task_scheduler,
                 ),
                 chunks,
             )
         )
+
+    if task_scheduler is not None and background_tasks is not None:
+        task_scheduler.flush_to(background_tasks)
 
     return ExtractBatchResponse(results=results)

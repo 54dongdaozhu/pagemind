@@ -21,7 +21,7 @@ function KnowledgeList({
           {extractProgress.total > 0 ? `（${extractProgress.done}/${extractProgress.total}）` : ''}
         </p>
       )}
-      {docLoaded && knowledgePoints.length === 0 && !extracting && (
+      {docLoaded && knowledgePoints.length === 0 && !extracting && !extractError && (
         <p className="placeholder">暂无提取到的知识点</p>
       )}
       {knowledgePoints.map((kp) => {
