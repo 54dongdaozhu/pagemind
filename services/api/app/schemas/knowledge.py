@@ -91,6 +91,12 @@ class ExtractBatchResponse(BaseModel):
     results: List[ExtractResponse]
 
 
+class DocKPResponse(BaseModel):
+    doc_id: str
+    knowledge_points: List[KnowledgePoint]
+    is_refined: bool = False
+
+
 class ExplainDeepRequest(BaseModel):
     keyword: str
     kp_type: str

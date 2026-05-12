@@ -13,11 +13,12 @@ from threading import BoundedSemaphore, RLock
 
 from sqlalchemy import select
 
-from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items
+from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items, refine_document_knowledge
 from app.core.config import EXTRACT_MAX_CONCURRENCY
 from app.core.database import ChunkKnowledgePoint, ExtractCache, KnowledgePoint as KnowledgePointRow, RagChunk, get_db
 from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
 from app.services import db_log
+from app.services.cache_service import ANALYSIS_REPORT_CACHE_TTL_SECONDS, get_json, set_json
 from app.services.job_queue import enqueue_job
 from app.services.rag.repository import scoped_doc_id
 
@@ -31,6 +32,34 @@ _llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
 
 # 缓存 TTL：7 天（同一 chunk 内容不会频繁变动）
 _CACHE_TTL_DAYS = 7
+_DOC_KP_CACHE_TTL = ANALYSIS_REPORT_CACHE_TTL_SECONDS  # 24h
+
+
+def _doc_kp_redis_key(user_id: str, doc_id: str) -> str:
+    return f"doc_kps:user:{user_id}:doc:{doc_id}"
+
+
+def get_refined_doc_kps(user_id: str, doc_id: str) -> list[dict] | None:
+    """读取 Phase 2 精炼后的文档级知识点（来自 Redis）。"""
+    data = get_json(_doc_kp_redis_key(user_id, doc_id))
+    if isinstance(data, list):
+        return data
+    return None
+
+
+def save_refined_doc_kps(user_id: str, doc_id: str, kps: list[dict]) -> None:
+    """将 Phase 2 精炼结果写入 Redis。"""
+    set_json(_doc_kp_redis_key(user_id, doc_id), kps, _DOC_KP_CACHE_TTL)
+
+
+def run_phase2_and_save(user_id: str, doc_id: str, all_chunk_kps: list[dict]) -> None:
+    """Phase 2 任务入口（由 job_queue 异步执行）。"""
+    try:
+        refined = refine_document_knowledge(user_id, doc_id, all_chunk_kps)
+        save_refined_doc_kps(user_id, doc_id, refined)
+        logger.info("[Phase2] saved %s refined KPs for doc=%s", len(refined), doc_id)
+    except Exception as e:
+        logger.exception("[Phase2] failed for doc=%s: %s", doc_id, e)
 
 
 def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint]:
@@ -367,5 +396,21 @@ def extract_knowledge_batch(
                 chunks,
             )
         )
+
+    # 触发 Phase 2：跨块去重 + 全局重要性 + RAG 验证（异步）
+    doc_id = next((c.doc_id for c in chunks if c.doc_id), None)
+    if doc_id:
+        all_chunk_kps = [
+            {**kp.model_dump(), "chunk_id": r.chunk_id}
+            for r in results
+            for kp in r.knowledge_points
+        ]
+        if all_chunk_kps:
+            if not enqueue_job(run_phase2_and_save, user_id, doc_id, all_chunk_kps):
+                # Redis/RQ 不可用时同步执行（仅 dev 环境）
+                try:
+                    run_phase2_and_save(user_id, doc_id, all_chunk_kps)
+                except Exception as e:
+                    logger.exception("[Phase2] sync fallback failed: %s", e)
 
     return ExtractBatchResponse(results=results)
