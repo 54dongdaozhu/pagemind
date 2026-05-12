@@ -15,11 +15,25 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  backend:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
     build:
-      context: ./backend
+      context: ./services/api
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     expose:
       - "8000"
@@ -31,10 +45,12 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RQ_QUEUE_NAME: ${RQ_QUEUE_NAME:-pagemind}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
     volumes:
-      - backend-data:/data
+      - api-data:/data
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()\""]
       interval: 30s
@@ -43,12 +59,35 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  frontend:
+  worker:
     build:
-      context: ./frontend
+      context: ./services/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATA_DIR: /data
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-pagemind}:${POSTGRES_PASSWORD:-pagemind}@postgres:5432/${POSTGRES_DB:-pagemind}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RQ_QUEUE_NAME: ${RQ_QUEUE_NAME:-pagemind}
+    volumes:
+      - api-data:/data
+    command: python worker.py
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./services/web
       target: runner
     depends_on:
-      backend:
+      api:
         condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-80}:80"
@@ -61,5 +100,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  backend-data:
+  api-data:
   postgres-data:
+  redis-data:

@@ -3,25 +3,37 @@ services:
     ports:
       - "5432:5432"
 
-  backend:
+  redis:
+    ports:
+      - "6379:6379"
+
+  api:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
-      - backend-data:/data
+      - ./services/api:/app
+      - api-data:/data
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-  frontend:
+  worker:
+    volumes:
+      - ./services/api:/app
+      - api-data:/data
+    command: python worker.py
+
+  web:
     build:
       target: dev
     ports:
       - "5173:5173"
     environment:
       CHOKIDAR_USEPOLLING: "true"
-      VITE_API_PROXY_TARGET: http://backend:8000
+      VITE_API_PROXY_TARGET: http://api:8000
     volumes:
-      - ./frontend:/app
+      - ./services/web:/app
       - frontend-node-modules:/app/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ >/dev/null"]
     command: npm run dev -- --host 0.0.0.0
 
 volumes:
