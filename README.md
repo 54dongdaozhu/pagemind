@@ -31,7 +31,7 @@
 
 ## 🏗️ 系统架构
 
-本项目采用前后端分离架构，前端负责文档解析、阅读交互和原文高亮，后端负责知识点提取、RAG 检索问答、LLM 调用和学习状态持久化。
+本项目采用服务化的前后端分离架构，前端负责文档解析、阅读交互和原文高亮；API 负责 HTTP 接口、RAG 检索问答、LLM 调用；worker 负责异步任务消费；PostgreSQL 与 Redis 作为独立基础设施容器运行。
 
 ```mermaid
 flowchart LR
@@ -47,10 +47,14 @@ flowchart LR
 
     subgraph BE[后端服务层]
         API[FastAPI 后端 API]
+        Worker[RQ Worker 异步任务]
         API --> Extract[知识点提取服务]
         API --> Explain[知识点讲解服务]
         API --> RAG[RAG 文档问答服务]
         API --> Knowledge[掌握状态服务]
+        API --> Redis[(Redis 队列)]
+        Redis --> Worker
+        Worker --> Persist[提取结果持久化]
     end
 
     subgraph AI[AI 能力层]
@@ -65,6 +69,7 @@ flowchart LR
         Chunk --> Embedding[Embedding API]
         Embedding --> Chroma[ChromaDB 向量库]
         Knowledge --> Postgres[(PostgreSQL)]
+        Persist --> Postgres
     end
 
     Frontend --> API
@@ -73,9 +78,9 @@ flowchart LR
 ### 架构说明
 
 - **前端层**：基于 React 19 + Vite，负责文档上传、文档解析、HTML 渲染、原文高亮和用户交互。
-- **后端服务层**：基于 FastAPI，提供知识点提取、知识点讲解、RAG 文档问答、学习状态管理等接口。
+- **后端服务层**：基于 FastAPI + RQ，API 进程处理 HTTP 请求，worker 进程消费 Redis 队列中的后台任务。
 - **AI 能力层**：通过 LangGraph 将知识点提取拆分为多步流程，并统一调用 OpenAI-compatible LLM 服务。
-- **存储层**：使用 ChromaDB 存储文档向量索引，使用 PostgreSQL 保存知识点、提取缓存和文档索引元数据。
+- **存储层**：使用 ChromaDB 存储文档向量索引，使用 PostgreSQL 保存知识点、提取缓存和文档索引元数据，使用 Redis 保存异步任务队列。
 
 ---
 
@@ -139,58 +144,32 @@ https://github.com/user-attachments/assets/5fb9914e-ca63-4b83-ba4e-5a6e2969b06f
 
 ```text
 ai-study-tool/
-├── frontend/                       # React + Vite 前端应用
-│   ├── public/                     # 静态资源
-│   ├── src/
-│   │   ├── main.jsx                # React 挂载入口
-│   │   ├── app/
-│   │   │   └── App.jsx             # 主界面编排：上传、阅读、讲解、问答
-│   │   ├── api/                    # 后端 API 访问层
-│   │   │   ├── client.js           # fetch 基础封装
-│   │   │   ├── knowledge.js        # 知识点提取/掌握状态接口
-│   │   │   ├── rag.js              # 文档索引与 RAG 问答接口
-│   │   │   └── chat.js             # Agent/聊天接口
-│   │   ├── features/               # 前端业务功能模块
-│   │   │   ├── document/           # 文档解析、文本切块、内容规范化
-│   │   │   ├── knowledge/          # 原文高亮与知识点定位
-│   │   │   ├── explanation/        # 深度讲解面板与流式输出 Hook
-│   │   │   ├── chat/               # 当前文档问答面板
-│   │   │   └── layout/             # 顶部栏等布局组件
-│   │   ├── styles/                 # 页面级样式
-│   │   ├── types/                  # 前端常量与类型约定
-│   │   ├── utils/                  # hash 等通用工具
-│   │   └── assets/                 # 图片与前端资源
-│   ├── package.json                # 前端依赖与 npm scripts
-│   └── vite.config.js              # Vite 配置
-├── backend/                        # FastAPI 后端服务
-│   ├── main.py                     # uvicorn main:app 兼容入口
-│   ├── requirements.txt            # Python 依赖
-│   ├── app/
-│   │   ├── main.py                 # FastAPI 创建、CORS、路由注册
-│   │   ├── core/
-│   │   │   ├── config.py           # 环境变量、API Key、CORS 配置
-│   │   │   └── database.py         # SQLAlchemy 模型、PostgreSQL 连接与初始化
-│   │   ├── routers/                # HTTP API 路由
-│   │   │   ├── health.py           # 健康检查与 LLM 连通性测试
-│   │   │   ├── extract.py          # 知识点提取接口
-│   │   │   ├── explain.py          # 深度讲解流式接口
-│   │   │   ├── knowledge.py        # 点击、掌握状态、统计接口
-│   │   │   ├── rag.py              # 文档索引与检索问答接口
-│   │   │   └── agent.py            # 学习 Agent 对话接口
-│   │   ├── services/               # 核心业务服务
-│   │   │   ├── llm_service.py      # DeepSeek/OpenAI 兼容调用
-│   │   │   ├── extract_service.py  # 知识点提取流水线入口
-│   │   │   ├── explain_service.py  # 简介与深度讲解生成
-│   │   │   ├── knowledge_service.py # 掌握状态读写
-│   │   │   └── rag_service.py      # ChromaDB 向量索引与检索
-│   │   ├── agents/                 # LangGraph 学习 Agent
-│   │   ├── schemas/                # Pydantic 请求/响应模型
-│   │   └── models/                 # 领域常量与数据模型
-│   ├── chroma_store/               # ChromaDB 本地向量库（运行生成）
-│   ├── .env                        # 本地密钥配置（不提交）
-│   └── venv/                       # Python 虚拟环境（不提交）
+├── services/
+│   ├── web/                        # React + Vite 前端应用，生产镜像内由 nginx 托管
+│   │   ├── public/
+│   │   ├── src/
+│   │   ├── nginx.conf
+│   │   ├── package.json
+│   │   └── vite.config.js
+│   └── api/                        # FastAPI API 与 RQ worker 共用代码
+│       ├── main.py                 # uvicorn main:app 兼容入口
+│       ├── worker.py               # RQ worker 入口
+│       ├── requirements.txt
+│       ├── app/
+│       │   ├── main.py             # FastAPI 创建、CORS、路由注册
+│       │   ├── core/               # 配置、数据库模型与连接
+│       │   ├── routers/            # HTTP API 路由
+│       │   ├── services/           # 核心业务服务与队列封装
+│       │   ├── agents/             # LangGraph 学习 Agent
+│       │   ├── schemas/
+│       │   └── models/
+│       └── alembic/                # 数据库迁移
+├── docs/
+│   └── service-design.md           # 服务边界与容器设计
 ├── test-docs/                      # 本地测试文档样例
-├── .gitignore
+├── docker-compose.yml              # api/web/worker/postgres/redis 编排
+├── docker-compose.override.yml     # 开发模式热加载覆盖
+├── docker-compose.deploy.yml       # 服务器镜像部署编排
 └── README.md
 ```
 
@@ -228,6 +207,10 @@ POSTGRES_DB=pagemind
 POSTGRES_USER=pagemind
 POSTGRES_PASSWORD=请改成强密码
 
+# Redis / RQ
+REDIS_URL=redis://redis:6379/0
+RQ_QUEUE_NAME=pagemind
+
 FRONTEND_PORT=80
 ALLOWED_ORIGINS=http://localhost
 UVICORN_WORKERS=1
@@ -248,10 +231,13 @@ docker compose -f docker-compose.yml up -d --build
 
 容器启动时会自动运行：
 
-- 后端：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
-- 前端：nginx 静态服务 + `/api/` 反向代理
+- `api`：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
+- `worker`：`python worker.py`
+- `web`：nginx 静态服务 + `/api/` 反向代理到 `api:8000`
+- `postgres`：独立 PostgreSQL 数据库
+- `redis`：独立 Redis 队列服务
 
-PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，ChromaDB 向量库会持久化到 `ai-study-tool_backend-data`。查看日志：
+PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，Redis 会持久化到 `ai-study-tool_redis-data`，ChromaDB 向量库会持久化到 `ai-study-tool_api-data`。查看日志：
 
 ```bash
 docker compose -f docker-compose.yml logs -f
@@ -345,7 +331,7 @@ cd /path/to/ai-study-tool
 ### 2. 配置后端
 
 ```bash
-cd backend
+cd services/api
 
 # 创建虚拟环境
 python3 -m venv venv
@@ -356,7 +342,7 @@ source venv/bin/activate  # Mac/Linux
 pip install -r requirements.txt
 ```
 
-在 `backend/` 目录下创建 `.env` 文件：
+在 `services/api/` 目录下创建 `.env` 文件：
 
 ```
 DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
@@ -383,7 +369,7 @@ uvicorn main:app --reload --port 8000
 打开新终端：
 
 ```bash
-cd frontend
+cd services/web
 npm install
 npm run dev
 ```
@@ -501,12 +487,12 @@ known(已掌握)
 
 ```bash
 # 终端 1: 后端
-cd backend
+cd services/api
 source venv/bin/activate
 uvicorn main:app --reload --port 8000
 
 # 终端 2: 前端
-cd frontend
+cd services/web
 npm run dev
 ```
 
