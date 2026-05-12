@@ -9,8 +9,7 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from threading import BoundedSemaphore, Lock, RLock
-from typing import Any, Protocol
+from threading import BoundedSemaphore, RLock
 
 from sqlalchemy import select
 
@@ -19,6 +18,7 @@ from app.core.config import EXTRACT_MAX_CONCURRENCY
 from app.core.database import ChunkKnowledgePoint, ExtractCache, KnowledgePoint as KnowledgePointRow, RagChunk, get_db
 from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
 from app.services import db_log
+from app.services.job_queue import enqueue_job
 from app.services.rag.repository import scoped_doc_id
 
 
@@ -31,28 +31,6 @@ _llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
 
 # 缓存 TTL：7 天（同一 chunk 内容不会频繁变动）
 _CACHE_TTL_DAYS = 7
-
-
-class PersistTaskScheduler(Protocol):
-    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> None:
-        ...
-
-
-class _PersistTaskCollector:
-    def __init__(self):
-        self._lock = Lock()
-        self._tasks: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
-
-    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> None:
-        with self._lock:
-            self._tasks.append((func, args, kwargs))
-
-    def flush_to(self, scheduler: PersistTaskScheduler) -> None:
-        with self._lock:
-            tasks = list(self._tasks)
-            self._tasks.clear()
-        for func, args, kwargs in tasks:
-            scheduler.add_task(func, *args, **kwargs)
 
 
 def _to_knowledge_points(kps_data: list[dict], text: str) -> list[KnowledgePoint]:
@@ -93,18 +71,19 @@ def _save_to_cache(cache_key: str, knowledge_points: list[KnowledgePoint]):
 
     with _extract_db_lock:
         with get_db() as db:
-            cache = db.get(ExtractCache, cache_key)
-            if cache is None:
-                db.add(ExtractCache(
-                    chunk_id=cache_key,
-                    result=result_data,
-                    created_at=now,
-                    expired_at=expired_at,
-                ))
-            else:
-                cache.result = result_data
-                cache.created_at = now
-                cache.expired_at = expired_at
+            if not _upsert_extract_cache_row(db, cache_key, result_data, now, expired_at):
+                cache = db.get(ExtractCache, cache_key)
+                if cache is None:
+                    db.add(ExtractCache(
+                        chunk_id=cache_key,
+                        result=result_data,
+                        created_at=now,
+                        expired_at=expired_at,
+                    ))
+                else:
+                    cache.result = result_data
+                    cache.created_at = now
+                    cache.expired_at = expired_at
             db.commit()
 
 
@@ -124,42 +103,10 @@ def _upsert_extracted_knowledge_points(
         with get_db() as db:
             resolved_chunk_index = _resolve_chunk_index(db, storage_doc_id, chunk_index) if storage_doc_id else None
             for item in knowledge_points:
-                row = db.execute(
-                    select(KnowledgePointRow).where(KnowledgePointRow.kp_text == item.text)
-                ).scalar_one_or_none()
-                if row is None:
-                    kp_id = uuid.uuid4().hex
-                    db.add(KnowledgePointRow(
-                        kp_id=kp_id,
-                        kp_text=item.text,
-                        kp_type=item.type,
-                        explanation=item.explanation,
-                        importance=item.importance,
-                        created_at=now,
-                        updated_at=now,
-                    ))
-                else:
-                    kp_id = row.kp_id
-                    row.kp_type = item.type
-                    row.explanation = item.explanation
-                    row.importance = item.importance
-                    row.updated_at = now
+                kp_id = _upsert_knowledge_point_row(db, item, now)
 
                 if storage_doc_id is not None and resolved_chunk_index is not None:
-                    existing_link = db.get(
-                        ChunkKnowledgePoint,
-                        (storage_doc_id, resolved_chunk_index, kp_id),
-                    )
-                    if existing_link is None:
-                        db.add(ChunkKnowledgePoint(
-                            doc_id=storage_doc_id,
-                            chunk_index=resolved_chunk_index,
-                            kp_id=kp_id,
-                            confidence=_confidence_for_importance(item.importance),
-                            created_at=now,
-                        ))
-                    else:
-                        existing_link.confidence = _confidence_for_importance(item.importance)
+                    _upsert_chunk_knowledge_link(db, storage_doc_id, resolved_chunk_index, kp_id, item, now)
             db.commit()
 
     db_log.log_event(
@@ -177,11 +124,147 @@ def _resolve_chunk_index(db, storage_doc_id: str | None, chunk_index: int | None
     return chunk_index if db.get(RagChunk, (storage_doc_id, chunk_index)) is not None else None
 
 
+def _upsert_extract_cache_row(
+    db,
+    cache_key: str,
+    result_data: list[dict],
+    now: datetime,
+    expired_at: datetime,
+) -> bool:
+    dialect = db.bind.dialect.name
+    if dialect not in {"postgresql", "sqlite"}:
+        return False
+
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+
+    stmt = insert(ExtractCache).values(
+        chunk_id=cache_key,
+        result=result_data,
+        created_at=now,
+        expired_at=expired_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["chunk_id"],
+        set_={
+            "result": result_data,
+            "created_at": now,
+            "expired_at": expired_at,
+        },
+    )
+    db.execute(stmt)
+    return True
+
+
+def _upsert_knowledge_point_row(db, item: KnowledgePoint, now: datetime) -> str:
+    dialect = db.bind.dialect.name
+    values = {
+        "kp_text": item.text,
+        "kp_type": item.type,
+        "explanation": item.explanation,
+        "importance": item.importance,
+        "updated_at": now,
+    }
+
+    if dialect in {"postgresql", "sqlite"}:
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert
+
+        stmt = insert(KnowledgePointRow).values(kp_id=uuid.uuid4().hex, created_at=now, **values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["kp_text"],
+            set_=values,
+        )
+        if dialect == "postgresql":
+            return db.execute(stmt.returning(KnowledgePointRow.kp_id)).scalar_one()
+        db.execute(stmt)
+        return db.execute(
+            select(KnowledgePointRow.kp_id).where(KnowledgePointRow.kp_text == item.text)
+        ).scalar_one()
+
+    row = db.execute(
+        select(KnowledgePointRow).where(KnowledgePointRow.kp_text == item.text)
+    ).scalar_one_or_none()
+    if row is None:
+        kp_id = uuid.uuid4().hex
+        db.add(KnowledgePointRow(kp_id=kp_id, created_at=now, **values))
+        return kp_id
+
+    row.kp_type = item.type
+    row.explanation = item.explanation
+    row.importance = item.importance
+    row.updated_at = now
+    return row.kp_id
+
+
+def _upsert_chunk_knowledge_link(
+    db,
+    storage_doc_id: str,
+    chunk_index: int,
+    kp_id: str,
+    item: KnowledgePoint,
+    now: datetime,
+) -> None:
+    confidence = _confidence_for_importance(item.importance)
+    dialect = db.bind.dialect.name
+
+    if dialect in {"postgresql", "sqlite"}:
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert
+
+        stmt = insert(ChunkKnowledgePoint).values(
+            doc_id=storage_doc_id,
+            chunk_index=chunk_index,
+            kp_id=kp_id,
+            confidence=confidence,
+            created_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["doc_id", "chunk_index", "kp_id"],
+            set_={"confidence": confidence},
+        )
+        db.execute(stmt)
+        return
+
+    existing_link = db.get(ChunkKnowledgePoint, (storage_doc_id, chunk_index, kp_id))
+    if existing_link is None:
+        db.add(ChunkKnowledgePoint(
+            doc_id=storage_doc_id,
+            chunk_index=chunk_index,
+            kp_id=kp_id,
+            confidence=confidence,
+            created_at=now,
+        ))
+    else:
+        existing_link.confidence = confidence
+
+
 def _confidence_for_importance(importance: str) -> float:
     return 0.95 if importance == "high" else 0.75
 
 
-def _persist_extraction_result(
+def persist_extraction_result(
+    user_id: str,
+    chunk_id: str,
+    cache_key: str,
+    knowledge_points_data: list[dict],
+    doc_id: str | None = None,
+    chunk_index: int | None = None,
+    save_cache: bool = False,
+) -> None:
+    knowledge_points = [KnowledgePoint(**item) for item in knowledge_points_data]
+    if save_cache:
+        _save_to_cache(cache_key, knowledge_points)
+    _upsert_extracted_knowledge_points(user_id, chunk_id, knowledge_points, doc_id, chunk_index)
+
+
+def _persist_or_enqueue(
     user_id: str,
     chunk_id: str,
     cache_key: str,
@@ -190,29 +273,14 @@ def _persist_extraction_result(
     chunk_index: int | None = None,
     save_cache: bool = False,
 ) -> None:
+    payload = [kp.model_dump() for kp in knowledge_points]
+    args = (user_id, chunk_id, cache_key, payload, doc_id, chunk_index, save_cache)
+    if enqueue_job(persist_extraction_result, *args):
+        return
     try:
-        if save_cache:
-            _save_to_cache(cache_key, knowledge_points)
-        _upsert_extracted_knowledge_points(user_id, chunk_id, knowledge_points, doc_id, chunk_index)
+        persist_extraction_result(*args)
     except Exception as e:
         logger.exception("Persisting extracted knowledge failed for chunk %s: %s", chunk_id, e)
-
-
-def _persist_or_schedule(
-    scheduler: PersistTaskScheduler | None,
-    user_id: str,
-    chunk_id: str,
-    cache_key: str,
-    knowledge_points: list[KnowledgePoint],
-    doc_id: str | None = None,
-    chunk_index: int | None = None,
-    save_cache: bool = False,
-) -> None:
-    args = (user_id, chunk_id, cache_key, knowledge_points, doc_id, chunk_index, save_cache)
-    if scheduler is None:
-        _persist_extraction_result(*args)
-        return
-    scheduler.add_task(_persist_extraction_result, *args)
 
 
 def extract_knowledge_from_text(
@@ -221,7 +289,6 @@ def extract_knowledge_from_text(
     text: str,
     doc_id: str | None = None,
     chunk_index: int | None = None,
-    background_tasks: PersistTaskScheduler | None = None,
 ) -> ExtractResponse:
     text = text.strip()
     cache_key = _scoped_chunk_id(user_id, chunk_id)
@@ -229,8 +296,7 @@ def extract_knowledge_from_text(
     with _extract_cache_lock:
         if cache_key in _extract_cache:
             cached_points = _extract_cache[cache_key]
-            _persist_or_schedule(
-                background_tasks,
+            _persist_or_enqueue(
                 user_id,
                 chunk_id,
                 cache_key,
@@ -244,8 +310,7 @@ def extract_knowledge_from_text(
     if cached is not None:
         with _extract_cache_lock:
             _extract_cache[cache_key] = cached
-        _persist_or_schedule(
-            background_tasks,
+        _persist_or_enqueue(
             user_id,
             chunk_id,
             cache_key,
@@ -268,8 +333,7 @@ def extract_knowledge_from_text(
 
     with _extract_cache_lock:
         _extract_cache[cache_key] = knowledge_points
-    _persist_or_schedule(
-        background_tasks,
+    _persist_or_enqueue(
         user_id,
         chunk_id,
         cache_key,
@@ -285,12 +349,10 @@ def extract_knowledge_from_text(
 def extract_knowledge_batch(
     user_id: str,
     chunks: list[ExtractBatchItem],
-    background_tasks: PersistTaskScheduler | None = None,
 ) -> ExtractBatchResponse:
     if not chunks:
         return ExtractBatchResponse(results=[])
 
-    task_scheduler = _PersistTaskCollector() if background_tasks is not None else None
     max_workers = min(EXTRACT_MAX_CONCURRENCY, len(chunks))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(
@@ -301,13 +363,9 @@ def extract_knowledge_batch(
                     chunk.text,
                     doc_id=chunk.doc_id,
                     chunk_index=chunk.chunk_index,
-                    background_tasks=task_scheduler,
                 ),
                 chunks,
             )
         )
-
-    if task_scheduler is not None and background_tasks is not None:
-        task_scheduler.flush_to(background_tasks)
 
     return ExtractBatchResponse(results=results)

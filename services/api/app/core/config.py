@@ -13,6 +13,9 @@ EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY"
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 EXTRACT_MAX_CONCURRENCY = max(1, int(os.getenv("EXTRACT_MAX_CONCURRENCY", "3")))
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+RQ_QUEUE_NAME = os.getenv("RQ_QUEUE_NAME", "pagemind")
+RQ_JOB_TIMEOUT_SECONDS = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "300"))
 DATA_DIR = Path(os.getenv("DATA_DIR", BACKEND_DIR))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

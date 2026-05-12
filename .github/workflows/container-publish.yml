@@ -26,10 +26,10 @@ jobs:
       matrix:
         include:
           - service: backend
-            context: ./backend
+            context: ./services/api
             image: ghcr.io/${{ github.repository }}-backend
           - service: frontend
-            context: ./frontend
+            context: ./services/web
             image: ghcr.io/${{ github.repository }}-frontend
     steps:
       - name: Checkout
