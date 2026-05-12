@@ -1,5 +1,80 @@
-export function highlightFirstMatch(container, keyword, kpId, kpType, status, importance) {
-  if (!keyword || !container) return false
+function createHighlightMark(kp, status) {
+  const mark = document.createElement('mark')
+  mark.className = [
+    'kp-highlight',
+    `kp-highlight-${kp.type}`,
+    `kp-status-${status || 'unknown'}`,
+    kp.importance === 'high' ? 'kp-high' : '',
+  ].filter(Boolean).join(' ')
+  mark.dataset.kpId = kp.id
+  mark.dataset.kpText = kp.text
+  mark.textContent = kp.text
+  return mark
+}
+
+
+function findFirstPendingMatch(text, pendingItems) {
+  let bestMatch = null
+  for (const kp of pendingItems.values()) {
+    const idx = text.indexOf(kp.text)
+    if (idx === -1) continue
+    if (
+      !bestMatch ||
+      idx < bestMatch.idx ||
+      (idx === bestMatch.idx && kp.text.length > bestMatch.kp.text.length)
+    ) {
+      bestMatch = { idx, kp }
+    }
+  }
+  return bestMatch
+}
+
+
+function markTextNode(textNode, pendingItems, getStatus, highlightedIds) {
+  let currentNode = textNode
+  let markedCount = 0
+
+  while (currentNode && pendingItems.size > 0) {
+    const text = currentNode.nodeValue
+    const match = findFirstPendingMatch(text, pendingItems)
+    if (!match) return markedCount
+
+    const { idx, kp } = match
+    const before = text.slice(0, idx)
+    const after = text.slice(idx + kp.text.length)
+    const mark = createHighlightMark(kp, getStatus(kp.text))
+    const parent = currentNode.parentNode
+    if (!parent) return markedCount
+
+    if (before) parent.insertBefore(document.createTextNode(before), currentNode)
+    parent.insertBefore(mark, currentNode)
+
+    const afterNode = after ? document.createTextNode(after) : null
+    if (afterNode) parent.insertBefore(afterNode, currentNode)
+    parent.removeChild(currentNode)
+
+    pendingItems.delete(kp.id)
+    highlightedIds.add(kp.id)
+    markedCount += 1
+    currentNode = afterNode
+  }
+
+  return markedCount
+}
+
+
+export function highlightKnowledgePoints(container, knowledgePoints, getStatus, highlightedIds) {
+  if (!container || knowledgePoints.length === 0) return 0
+
+  const pendingItems = new Map()
+  for (const kp of knowledgePoints) {
+    if (kp?.id && kp?.text && !highlightedIds.has(kp.id)) {
+      pendingItems.set(kp.id, kp)
+    }
+  }
+  if (pendingItems.size === 0) return 0
+
+  const textNodes = []
   const walker = document.createTreeWalker(
     container,
     NodeFilter.SHOW_TEXT,
@@ -12,32 +87,29 @@ export function highlightFirstMatch(container, keyword, kpId, kpType, status, im
       },
     },
   )
+
   let textNode
   while ((textNode = walker.nextNode())) {
-    const text = textNode.nodeValue
-    const idx = text.indexOf(keyword)
-    if (idx !== -1) {
-      const before = text.slice(0, idx)
-      const after = text.slice(idx + keyword.length)
-      const mark = document.createElement('mark')
-      mark.className = [
-        'kp-highlight',
-        `kp-highlight-${kpType}`,
-        `kp-status-${status || 'unknown'}`,
-        importance === 'high' ? 'kp-high' : '',
-      ].filter(Boolean).join(' ')
-      mark.dataset.kpId = kpId
-      mark.dataset.kpText = keyword
-      mark.textContent = keyword
-      const parent = textNode.parentNode
-      if (before) parent.insertBefore(document.createTextNode(before), textNode)
-      parent.insertBefore(mark, textNode)
-      if (after) parent.insertBefore(document.createTextNode(after), textNode)
-      parent.removeChild(textNode)
-      return true
-    }
+    textNodes.push(textNode)
   }
-  return false
+
+  let markedCount = 0
+  for (const node of textNodes) {
+    if (pendingItems.size === 0) break
+    markedCount += markTextNode(node, pendingItems, getStatus, highlightedIds)
+  }
+
+  for (const kpId of pendingItems.keys()) {
+    highlightedIds.add(kpId)
+  }
+
+  return markedCount
+}
+
+
+export function highlightFirstMatch(container, keyword, kpId, kpType, status, importance) {
+  const kp = { id: kpId, text: keyword, type: kpType, importance }
+  return highlightKnowledgePoints(container, [kp], () => status, new Set()) > 0
 }
 
 

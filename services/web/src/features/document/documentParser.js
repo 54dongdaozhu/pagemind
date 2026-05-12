@@ -1,5 +1,3 @@
-import mammoth from 'mammoth'
-
 const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md']
 const DOCX_STYLE_MAP = [
   "p[style-name='Title'] => h1:fresh",
@@ -131,6 +129,7 @@ function markdownToHtml(markdown) {
 }
 
 async function parseDocx(file) {
+  const { default: mammoth } = await import('mammoth')
   const arrayBuffer = await file.arrayBuffer()
   const result = await mammoth.convertToHtml({ arrayBuffer }, { styleMap: DOCX_STYLE_MAP })
   return result.value

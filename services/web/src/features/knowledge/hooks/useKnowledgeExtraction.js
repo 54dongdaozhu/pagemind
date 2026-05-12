@@ -43,13 +43,12 @@ export function useKnowledgeExtraction() {
     setExtractError('')
     const chunks = splitIntoChunks(html)
     setExtractProgress({ done: 0, total: chunks.length })
-    const allKPs = []
+    const kpsByChunk = Array.from({ length: chunks.length }, () => [])
     let nextChunkIndex = 0
     let completed = 0
 
     const updateKnowledgePoints = () => {
-      const orderedKPs = [...allKPs].sort((a, b) => a.chunkIndex - b.chunkIndex)
-      setKnowledgePoints(orderedKPs)
+      setKnowledgePoints(kpsByChunk.flat())
     }
 
     const extractNextChunk = async () => {
@@ -61,12 +60,11 @@ export function useKnowledgeExtraction() {
 
         try {
           const data = await extractKnowledge(text, chunkId, docId, i)
-          const kpsWithMeta = (data.knowledge_points || []).map(kp => ({
+          kpsByChunk[i] = (data.knowledge_points || []).map(kp => ({
             ...kp,
             chunkIndex: i,
             id: hashString(kp.text + i),
           }))
-          allKPs.push(...kpsWithMeta)
           if (extractionRunRef.current === runId) {
             updateKnowledgePoints()
           }

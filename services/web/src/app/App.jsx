@@ -8,7 +8,7 @@ import { htmlToPlainText } from '../features/document/documentUtils'
 import { useDeepExplanation } from '../features/explanation/useDeepExplanation'
 import AppHeader from '../features/layout/AppHeader'
 import {
-  highlightFirstMatch,
+  highlightKnowledgePoints,
   updateMarkStatusInDom,
 } from '../features/knowledge/highlightDom'
 import KnowledgePanel from '../features/knowledge/components/KnowledgePanel'
@@ -176,13 +176,8 @@ function App() {
   // 增量高亮
   useEffect(() => {
     if (!docContentRef.current || !docLoaded) return
-    for (const kp of uniqueKPs) {
-      if (highlightedIdsRef.current.has(kp.id)) continue
-      const status = getKpStatus(kp.text)
-      highlightFirstMatch(docContentRef.current, kp.text, kp.id, kp.type, status, kp.importance)
-      highlightedIdsRef.current.add(kp.id)
-    }
-  }, [uniqueKPs, docLoaded, kpStatusMap, getKpStatus])
+    highlightKnowledgePoints(docContentRef.current, uniqueKPs, getKpStatus, highlightedIdsRef.current)
+  }, [uniqueKPs, docLoaded, getKpStatus])
 
   // 同步 mark 状态 class
   useEffect(() => {
