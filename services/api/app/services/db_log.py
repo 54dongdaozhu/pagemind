@@ -1,13 +1,13 @@
 """
 Non-blocking database logging helpers.
 
-Fire-and-forget writes (log_llm_call, log_tool_call, log_event,
-log_embedding_records, finish_workflow_run, finish_workflow_step, log_qa)
-submit to a shared thread pool and swallow all exceptions so callers are
-never blocked or affected by log failures.
+Fire-and-forget writes submit to a shared thread pool and swallow all
+exceptions so callers are never blocked or affected by log failures.
 
-create_workflow_run / create_workflow_step are synchronous because callers
-need the returned ID before proceeding.
+create_workflow_run / create_workflow_step return IDs immediately and enqueue
+the insert in the same ordered worker as follow-up log writes. This keeps
+workflow IDs available to callers without putting database commits in the
+request's critical path.
 """
 import logging
 import uuid
@@ -33,7 +33,10 @@ from app.core.database import (
 
 logger = logging.getLogger(__name__)
 
-_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db_log")
+_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="db_log")
+LOG_STREAM_NAME = "stream:db_log"
+LOG_CONSUMER_GROUP = "db_log_writers"
+LOG_MAX_LEN = 100_000
 
 # Per-request context — set at request boundary, read by all write helpers.
 # Callers should use var.set(value) / var.reset(token) to avoid stale values.
@@ -43,7 +46,23 @@ current_step_id: ContextVar[str | None] = ContextVar("current_step_id", default=
 current_qa_id: ContextVar[str | None] = ContextVar("current_qa_id", default=None)
 
 
+_STREAM_WRITE_MAP = {
+    "_write_llm_call": "_write_llm_call",
+    "_write_tool_call": "_write_tool_call",
+    "_write_event": "_write_event",
+    "_write_workflow_run": "_write_workflow_run",
+    "_write_finish_run": "_write_finish_run",
+    "_write_workflow_step": "_write_workflow_step",
+    "_write_finish_step": "_write_finish_step",
+    "_write_qa": "_write_qa",
+    "_write_embedding_records": "_write_embedding_records",
+    "_write_review_records": "_write_review_records",
+}
+
+
 def _submit(fn, **kwargs) -> None:
+    if _enqueue_stream(fn, kwargs):
+        return
     _pool.submit(_safe_run, fn, **kwargs)
 
 
@@ -52,6 +71,57 @@ def _safe_run(fn, **kwargs):
         fn(**kwargs)
     except Exception:
         logger.exception("[db_log] background write failed: %s", fn.__name__)
+
+
+def _json_default(value):
+    if isinstance(value, datetime):
+        return {"__datetime__": value.isoformat()}
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _json_object_hook(value):
+    marker = value.get("__datetime__") if isinstance(value, dict) else None
+    if marker:
+        return datetime.fromisoformat(marker)
+    return value
+
+
+def _enqueue_stream(fn, kwargs: dict) -> bool:
+    kind = _STREAM_WRITE_MAP.get(fn.__name__)
+    if not kind:
+        return False
+    try:
+        from app.services.cache_service import get_redis
+
+        get_redis().xadd(
+            LOG_STREAM_NAME,
+            {"kind": kind, "payload": json_dumps(kwargs)},
+            maxlen=LOG_MAX_LEN,
+            approximate=True,
+        )
+        return True
+    except Exception as exc:
+        logger.debug("[db_log] Redis stream enqueue failed, falling back to thread pool: %s", exc)
+        return False
+
+
+def json_dumps(value: Any) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_json_default)
+
+
+def json_loads(value: str) -> Any:
+    import json
+
+    return json.loads(value, object_hook=_json_object_hook)
+
+
+def process_stream_entry(kind: str, payload: dict) -> None:
+    fn = globals().get(kind)
+    if fn is None or kind not in _STREAM_WRITE_MAP.values():
+        raise ValueError(f"Unknown db_log stream entry kind: {kind}")
+    fn(**payload)
 
 
 # ── LLM call log ──────────────────────────────────────────────────────────────
@@ -222,14 +292,30 @@ def create_workflow_run(
     trigger_source: str = "api",
     input_data: Any = None,
 ) -> str:
-    """Synchronously inserts a WorkflowRun row; returns its run_id."""
+    """Returns a WorkflowRun ID immediately and enqueues the insert."""
     run_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc)
+    _submit(
+        _write_workflow_run,
+        run_id=run_id,
+        user_id=user_id if user_id is not None else current_user_id.get(),
+        doc_id=doc_id,
+        workflow_type=workflow_type,
+        trigger_source=trigger_source,
+        input_data=input_data,
+        now=now,
+    )
+    return run_id
+
+
+def _write_workflow_run(
+    *, run_id, user_id, doc_id, workflow_type, trigger_source, input_data, now,
+):
     try:
         with get_db() as db:
             db.add(WorkflowRun(
                 run_id=run_id,
-                user_id=user_id if user_id is not None else current_user_id.get(),
+                user_id=user_id,
                 doc_id=doc_id,
                 workflow_type=workflow_type,
                 trigger_source=trigger_source,
@@ -242,7 +328,6 @@ def create_workflow_run(
             db.commit()
     except Exception:
         logger.exception("[db_log] create_workflow_run failed")
-    return run_id
 
 
 def finish_workflow_run(
@@ -284,9 +369,22 @@ def create_workflow_step(
     step_order: int,
     input_data: Any = None,
 ) -> str:
-    """Synchronously inserts a WorkflowStep row; returns its step_id."""
+    """Returns a WorkflowStep ID immediately and enqueues the insert."""
     step_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc)
+    _submit(
+        _write_workflow_step,
+        step_id=step_id,
+        run_id=run_id,
+        step_name=step_name,
+        step_order=step_order,
+        input_data=input_data,
+        now=now,
+    )
+    return step_id
+
+
+def _write_workflow_step(*, step_id, run_id, step_name, step_order, input_data, now):
     try:
         with get_db() as db:
             db.add(WorkflowStep(
@@ -302,7 +400,6 @@ def create_workflow_step(
             db.commit()
     except Exception:
         logger.exception("[db_log] create_workflow_step failed")
-    return step_id
 
 
 def finish_workflow_step(
