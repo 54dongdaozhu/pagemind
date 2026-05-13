@@ -6,6 +6,24 @@ const STREAM_DONE_MARKER = '\n[STREAM_DONE]\n'
 const STREAM_META_MARKER = '\n[STREAM_META]\n'
 
 
+async function readErrorMessage(response) {
+  let message = `请求失败: ${response.status}`
+  try {
+    const contentType = response.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const data = await response.json()
+      if (data?.detail) message = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)
+    } else {
+      const text = await response.text()
+      if (text.trim()) message = text.trim()
+    }
+  } catch {
+    // Keep the status-only message when the error body is not readable.
+  }
+  return message
+}
+
+
 function ChatPanel({ docId, docLoaded, ragReady, ragError, messages, setMessages, loading, setLoading }) {
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
@@ -36,7 +54,7 @@ function ChatPanel({ docId, docLoaded, ragReady, ragError, messages, setMessages
 
     try {
       const response = await sendChatMessageStream(text, docId, history, controller.signal)
-      if (!response.ok) throw new Error(`请求失败: ${response.status}`)
+      if (!response.ok) throw new Error(await readErrorMessage(response))
       if (!response.body) throw new Error('响应不支持流式读取')
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')

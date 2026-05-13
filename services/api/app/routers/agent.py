@@ -68,9 +68,9 @@ def agent_chat_stream(request: AgentChatRequest, current_user: User = Depends(ge
                 doc_id=request.doc_id,
                 history=request.history,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Unhandled error in agent_chat_stream")
-            yield "抱歉，服务暂时不可用，请稍后重试。"
+            yield f"对话服务暂时不可用：{str(exc)}"
         finally:
             db_log.current_user_id.reset(user_id_token)
 
