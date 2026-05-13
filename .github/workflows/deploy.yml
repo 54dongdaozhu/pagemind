@@ -94,6 +94,19 @@ jobs:
             set -eu
             cd "${{ secrets.DEPLOY_PATH }}"
 
+            dump_diagnostics() {
+              echo "::group::docker compose ps"
+              docker compose -f docker-compose.deploy.yml ps || true
+              echo "::endgroup::"
+              echo "::group::api logs"
+              docker compose -f docker-compose.deploy.yml logs --tail 120 api || true
+              echo "::endgroup::"
+              echo "::group::web logs"
+              docker compose -f docker-compose.deploy.yml logs --tail 80 web || true
+              echo "::endgroup::"
+            }
+            trap dump_diagnostics ERR
+
             cat > .env <<EOF
             IMAGE_TAG=${IMAGE_TAG}
             BACKEND_IMAGE=${BACKEND_IMAGE}
@@ -117,4 +130,5 @@ jobs:
 
             docker compose -f docker-compose.deploy.yml pull
             docker compose -f docker-compose.deploy.yml up -d --remove-orphans
+            docker compose -f docker-compose.deploy.yml ps
             docker image prune -f
