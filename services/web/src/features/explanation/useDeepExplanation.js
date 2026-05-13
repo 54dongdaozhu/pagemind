@@ -43,15 +43,18 @@ export function useDeepExplanation(docContentRef) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let pendingText = ''
+      let streamComplete = false
       const appendExplanationChunk = (chunk) => {
         if (chunk) setDeepExplanation(prev => prev + chunk)
       }
       const consumeStreamText = (chunk) => {
+        if (!chunk) return streamComplete
         const text = pendingText + chunk
         const markerIndex = text.indexOf(STREAM_DONE_MARKER)
         if (markerIndex !== -1) {
           appendExplanationChunk(text.slice(0, markerIndex))
           pendingText = ''
+          streamComplete = true
           return true
         }
 
@@ -66,10 +69,15 @@ export function useDeepExplanation(docContentRef) {
           if (done) break
           if (consumeStreamText(decoder.decode(value, { stream: true }))) break
         }
-        consumeStreamText(decoder.decode())
-        appendExplanationChunk(pendingText)
-        pendingText = ''
+        if (!streamComplete) {
+          consumeStreamText(decoder.decode())
+          appendExplanationChunk(pendingText)
+          pendingText = ''
+        }
       } finally {
+        if (streamComplete) {
+          await reader.cancel().catch(() => {})
+        }
         reader.releaseLock()
       }
     } catch (err) {

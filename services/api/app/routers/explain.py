@@ -10,8 +10,8 @@ STREAM_DONE_MARKER = "\n[STREAM_DONE]\n"
 
 
 @router.post("/explain-deep")
-async def explain_deep(request: ExplainDeepRequest):
-    async def generate():
+def explain_deep(request: ExplainDeepRequest):
+    def generate():
         for chunk in stream_deep_explanation(
             keyword=request.keyword.strip(),
             kp_type=request.kp_type,
@@ -26,5 +26,6 @@ async def explain_deep(request: ExplainDeepRequest):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Content-Encoding": "identity",
         },
     )

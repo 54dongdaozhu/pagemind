@@ -15,6 +15,12 @@ _PROVIDER = "deepseek"
 _MODEL = "deepseek-chat"
 
 
+def _stream_cached_text(text: str, chunk_size: int = 12):
+    for index in range(0, len(text), chunk_size):
+        yield text[index:index + chunk_size]
+        time.sleep(0.01)
+
+
 def call_deepseek(
     messages: list,
     temperature: float = 0.3,
@@ -86,7 +92,7 @@ def call_deepseek_stream(
     cache_key = f"cache:prompt:{stable_hash({'model': _MODEL, 'messages': messages, 'temperature': temperature, 'stream': True})}"
     cached = get_text(cache_key)
     if cached is not None:
-        yield cached
+        yield from _stream_cached_text(cached)
         return
 
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
