@@ -29,6 +29,7 @@ function App() {
   const [documents, setDocuments] = useState([])
   const [activeDocId, setActiveDocId] = useState('')
   const [ragReadyDocIds, setRagReadyDocIds] = useState(() => new Set())
+  const [ragIndexErrors, setRagIndexErrors] = useState(() => new Map())
 
   // 目录相关
   const [tocItems, setTocItems] = useState([])
@@ -118,6 +119,11 @@ function App() {
       extractProgress: { done: 0, total: 0 },
       extractError: '',
     })
+    setRagIndexErrors(prev => {
+      const next = new Map(prev)
+      next.delete(docId)
+      return next
+    })
 
     const ragIndexPromise = indexRagDocument(docId, plainText, name).then(() => {
       setRagReadyDocIds(prev => {
@@ -127,6 +133,11 @@ function App() {
       })
     }).catch(err => {
       console.error('RAG 索引失败:', err)
+      setRagIndexErrors(prev => {
+        const next = new Map(prev)
+        next.set(docId, err.name === 'AbortError' ? '问答索引超时，请稍后重新上传或检查后端日志。' : (err.message || '问答索引失败'))
+        return next
+      })
     })
 
     await Promise.all([extractAllChunks(html, docId), ragIndexPromise])
@@ -296,6 +307,7 @@ function App() {
     resetDocumentState()
     setDocuments([])
     setRagReadyDocIds(new Set())
+    setRagIndexErrors(new Map())
     documentSnapshotsRef.current = new Map()
   }
 
@@ -382,6 +394,7 @@ function App() {
         docLoaded={docLoaded}
         docId={activeDocId}
         ragReady={Boolean(activeDocId && ragReadyDocIds.has(activeDocId))}
+        ragError={activeDocId ? ragIndexErrors.get(activeDocId) : ''}
         knowledgePoints={uniqueKPs}
         stats={stats}
         getKpStatus={getKpStatus}

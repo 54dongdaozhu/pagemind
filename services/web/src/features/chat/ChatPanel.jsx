@@ -6,7 +6,7 @@ const STREAM_DONE_MARKER = '\n[STREAM_DONE]\n'
 const STREAM_META_MARKER = '\n[STREAM_META]\n'
 
 
-function ChatPanel({ docId, docLoaded, ragReady, messages, setMessages, loading, setLoading }) {
+function ChatPanel({ docId, docLoaded, ragReady, ragError, messages, setMessages, loading, setLoading }) {
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
   const abortRef = useRef(null)
@@ -162,7 +162,7 @@ function ChatPanel({ docId, docLoaded, ragReady, messages, setMessages, loading,
               ? '上传文档后可以围绕内容提问'
               : ragReady
                 ? '可以围绕当前文档提问'
-                : '正在为当前文档建立问答索引...'}
+                : ragError || '正在为当前文档建立问答索引...'}
           </p>
         )}
         {messages.map((msg, i) => (
@@ -215,9 +215,9 @@ function ChatPanel({ docId, docLoaded, ragReady, messages, setMessages, loading,
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={loading || !docLoaded || !ragReady}
+          disabled={loading || !docLoaded || !ragReady || Boolean(ragError)}
         />
-        <button className="chat-send-btn" onClick={send} disabled={loading || !docLoaded || !ragReady || !input.trim()}>
+        <button className="chat-send-btn" onClick={send} disabled={loading || !docLoaded || !ragReady || Boolean(ragError) || !input.trim()}>
           发送
         </button>
       </div>

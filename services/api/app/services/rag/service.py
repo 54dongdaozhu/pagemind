@@ -1,4 +1,6 @@
 import re
+import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from app.schemas.knowledge import RagSource
 from app.services.llm_service import call_deepseek
@@ -15,6 +17,9 @@ from app.services.rag.repository import (
 )
 from app.services.rag.vector_store import index_chunks_in_chroma, retrieve_by_chroma
 
+
+logger = logging.getLogger(__name__)
+_rag_enrichment_executor = ThreadPoolExecutor(max_workers=2)
 
 RAG_SYSTEM_PROMPT = """你是一个严谨的文档问答助手。请只依据给定的文档片段回答用户问题。
 
@@ -64,25 +69,65 @@ def index_document_text(
 ) -> int:
     normalized_text = normalize_text(text)
     chunks = split_text_for_rag(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    summary = summarize_document(normalized_text)
-    embeddings = embed_texts(chunks)
     storage_doc_id = scoped_doc_id(user_id, doc_id)
-    index_chunks_in_chroma(storage_doc_id, chunks, embeddings)
     save_indexed_document(
         user_id=user_id,
         doc_id=doc_id,
         chunks=chunks,
-        embeddings=embeddings,
-        summary=summary,
+        embeddings=None,
+        summary=_quick_document_summary(normalized_text),
         title=title,
     )
-    if embeddings:
-        db_log.log_embedding_records(
-            storage_doc_id=storage_doc_id,
-            model=EMBEDDING_MODEL,
-            chunk_count=len(chunks),
-        )
+    _rag_enrichment_executor.submit(
+        _enrich_indexed_document,
+        user_id=user_id,
+        doc_id=doc_id,
+        storage_doc_id=storage_doc_id,
+        chunks=chunks,
+        normalized_text=normalized_text,
+        title=title,
+    )
     return len(chunks)
+
+
+def _enrich_indexed_document(
+    user_id: str,
+    doc_id: str,
+    storage_doc_id: str,
+    chunks: list[str],
+    normalized_text: str,
+    title: str | None,
+) -> None:
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            summary_future = executor.submit(summarize_document, normalized_text)
+            embeddings_future = executor.submit(embed_texts, chunks)
+            summary = summary_future.result()
+            embeddings = embeddings_future.result()
+        index_chunks_in_chroma(storage_doc_id, chunks, embeddings)
+        save_indexed_document(
+            user_id=user_id,
+            doc_id=doc_id,
+            chunks=chunks,
+            embeddings=embeddings,
+            summary=summary,
+            title=title,
+        )
+        if embeddings:
+            db_log.log_embedding_records(
+                storage_doc_id=storage_doc_id,
+                model=EMBEDDING_MODEL,
+                chunk_count=len(chunks),
+            )
+    except Exception as exc:
+        logger.exception("RAG enrichment failed for doc_id=%s: %s", doc_id, exc)
+
+
+def _quick_document_summary(text: str) -> str:
+    text = normalize_text(text)
+    if not text:
+        return "空文档。"
+    return _build_summary_input(text)[:800]
 
 
 def summarize_document(text: str) -> str:
