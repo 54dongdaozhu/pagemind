@@ -26,6 +26,7 @@ venv/
 *.sqlite
 backend/chroma_store/
 services/api/chroma_store/
+services/api/assets/
 
 # Generated source bundle
 ALL_CODE.md

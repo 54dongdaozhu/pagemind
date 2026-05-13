@@ -7,9 +7,11 @@ Create Date: 2026-05-10
 策略：每张表都用 IF NOT EXISTS 语义（先 inspect 再建），使本迁移对已有旧库
 也是幂等的。旧库上该版本完成后，002 负责把旧格式列升级为新格式。
 """
+import uuid as _uuid
+
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 revision = "001"
 down_revision = None
@@ -19,6 +21,43 @@ depends_on = None
 
 def _existing_tables(conn) -> set:
     return set(inspect(conn).get_table_names())
+
+
+def _col_names(conn, table: str) -> set:
+    return {c["name"] for c in inspect(conn).get_columns(table)}
+
+
+def _upgrade_legacy_knowledge_points_for_new_fks(conn, existing: set) -> None:
+    """Make pre-Alembic knowledge_points safe for new kp_id foreign keys."""
+    if "knowledge_points" not in existing:
+        return
+
+    kp_cols = _col_names(conn, "knowledge_points")
+    if "kp_id" in kp_cols:
+        return
+
+    op.execute(text("ALTER TABLE knowledge_points ADD COLUMN kp_id VARCHAR(32)"))
+    rows = conn.execute(text("SELECT kp_text FROM knowledge_points")).fetchall()
+    for (kp_text,) in rows:
+        conn.execute(
+            text("UPDATE knowledge_points SET kp_id = :id WHERE kp_text = :text"),
+            {"id": _uuid.uuid4().hex, "text": kp_text},
+        )
+
+    if conn.dialect.name != "postgresql":
+        return
+
+    for child in ("study_records", "chunk_knowledge_points", "review_records"):
+        if child not in existing:
+            continue
+        for fk in inspect(conn).get_foreign_keys(child):
+            if fk.get("referred_table") == "knowledge_points" and fk.get("name"):
+                op.execute(text(f"ALTER TABLE {child} DROP CONSTRAINT IF EXISTS {fk['name']}"))
+
+    op.execute(text("ALTER TABLE knowledge_points ALTER COLUMN kp_id SET NOT NULL"))
+    op.execute(text("ALTER TABLE knowledge_points DROP CONSTRAINT IF EXISTS knowledge_points_pkey"))
+    op.execute(text("ALTER TABLE knowledge_points ADD CONSTRAINT uq_kp_text UNIQUE (kp_text)"))
+    op.execute(text("ALTER TABLE knowledge_points ADD PRIMARY KEY (kp_id)"))
 
 
 def upgrade() -> None:
@@ -97,6 +136,8 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
             sa.UniqueConstraint("kp_text", name="uq_kp_text"),
         )
+    else:
+        _upgrade_legacy_knowledge_points_for_new_fks(conn, existing)
 
     # ── chunk_knowledge_points ───────────────────────────────────────────
     if "chunk_knowledge_points" not in existing:
