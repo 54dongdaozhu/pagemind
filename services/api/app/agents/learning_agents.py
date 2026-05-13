@@ -88,11 +88,15 @@ def retrieval_agent(state: LearningAgentState) -> dict:
         }
 
     if state["intent"] in {"summarize", "structure"}:
-        cached_summary = call_tool(
-            "read_document_summary",
-            user_id=state["user_id"],
-            doc_id=state["doc_id"],
-        )
+        try:
+            cached_summary = call_tool(
+                "read_document_summary",
+                user_id=state["user_id"],
+                doc_id=state["doc_id"],
+            )
+        except Exception as e:
+            logger.warning("read_document_summary failed: %s", e)
+            cached_summary = None
         if cached_summary:
             return {
                 "summary": cached_summary,
@@ -100,12 +104,16 @@ def retrieval_agent(state: LearningAgentState) -> dict:
                 "tools_used": [*state["tools_used"], "read_document_summary"],
                 "stop_reason": "retrieved",
             }
-        result = call_tool(
-            "summarize_full_document",
-            user_id=state["user_id"],
-            doc_id=state["doc_id"],
-            request=state["message"],
-        )
+        try:
+            result = call_tool(
+                "summarize_full_document",
+                user_id=state["user_id"],
+                doc_id=state["doc_id"],
+                request=state["message"],
+            )
+        except Exception as e:
+            logger.warning("summarize_full_document failed: %s", e)
+            result = {}
         return {
             "summary": result.get("summary") or "",
             "sources": [],
@@ -113,13 +121,17 @@ def retrieval_agent(state: LearningAgentState) -> dict:
             "stop_reason": "full_document_summarized",
         }
 
-    sources = call_tool(
-        "search_document_chunks",
-        user_id=state["user_id"],
-        doc_id=state["doc_id"],
-        query=state["query"],
-        top_k=5,
-    )
+    try:
+        sources = call_tool(
+            "search_document_chunks",
+            user_id=state["user_id"],
+            doc_id=state["doc_id"],
+            query=state["query"],
+            top_k=5,
+        )
+    except Exception as e:
+        logger.warning("search_document_chunks failed: %s", e)
+        sources = []
     if state["intent"] in {"qa", "explain"}:
         return {
             "summary": "",
@@ -128,7 +140,11 @@ def retrieval_agent(state: LearningAgentState) -> dict:
             "stop_reason": "retrieved",
         }
 
-    summary = call_tool("read_document_summary", user_id=state["user_id"], doc_id=state["doc_id"])
+    try:
+        summary = call_tool("read_document_summary", user_id=state["user_id"], doc_id=state["doc_id"])
+    except Exception as e:
+        logger.warning("read_document_summary failed: %s", e)
+        summary = ""
     return {
         "summary": summary,
         "sources": sources,
@@ -418,7 +434,8 @@ def stream_learning_agents(
             )
     except Exception as e:
         success, error_info = False, {"error": str(e)}
-        raise
+        logger.exception("stream_learning_agents unexpected error: %s", e)
+        yield "抱歉，服务暂时不可用，请稍后重试。"
     finally:
         db_log.current_run_id.reset(run_id_token)
         db_log.finish_workflow_run(

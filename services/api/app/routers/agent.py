@@ -1,3 +1,4 @@
+import logging
 import time
 
 from fastapi import APIRouter, Depends
@@ -9,6 +10,8 @@ from app.agents.tool_registry import list_tools
 from app.schemas.knowledge import AgentChatRequest, AgentChatResponse
 from app.services import db_log
 from app.services.auth_service import get_current_user
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -65,6 +68,9 @@ def agent_chat_stream(request: AgentChatRequest, current_user: User = Depends(ge
                 doc_id=request.doc_id,
                 history=request.history,
             )
+        except Exception:
+            logger.exception("Unhandled error in agent_chat_stream")
+            yield "抱歉，服务暂时不可用，请稍后重试。"
         finally:
             db_log.current_user_id.reset(user_id_token)
 
