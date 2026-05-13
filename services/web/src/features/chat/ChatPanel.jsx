@@ -6,7 +6,7 @@ const STREAM_DONE_MARKER = '\n[STREAM_DONE]\n'
 const STREAM_META_MARKER = '\n[STREAM_META]\n'
 
 
-function ChatPanel({ docId, docLoaded, messages, setMessages, loading, setLoading }) {
+function ChatPanel({ docId, docLoaded, ragReady, messages, setMessages, loading, setLoading }) {
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
   const abortRef = useRef(null)
@@ -158,7 +158,11 @@ function ChatPanel({ docId, docLoaded, messages, setMessages, loading, setLoadin
       <div className="chat-messages">
         {messages.length === 0 && (
           <p className="chat-empty">
-            {docLoaded ? '可以围绕当前文档提问' : '上传文档后可以围绕内容提问'}
+            {!docLoaded
+              ? '上传文档后可以围绕内容提问'
+              : ragReady
+                ? '可以围绕当前文档提问'
+                : '正在为当前文档建立问答索引...'}
           </p>
         )}
         {messages.map((msg, i) => (
@@ -211,9 +215,9 @@ function ChatPanel({ docId, docLoaded, messages, setMessages, loading, setLoadin
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={loading || !docLoaded}
+          disabled={loading || !docLoaded || !ragReady}
         />
-        <button className="chat-send-btn" onClick={send} disabled={loading || !docLoaded || !input.trim()}>
+        <button className="chat-send-btn" onClick={send} disabled={loading || !docLoaded || !ragReady || !input.trim()}>
           发送
         </button>
       </div>

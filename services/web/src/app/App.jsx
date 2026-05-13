@@ -28,6 +28,7 @@ function App() {
   const [hideKnown, setHideKnown] = useState(true)
   const [documents, setDocuments] = useState([])
   const [activeDocId, setActiveDocId] = useState('')
+  const [ragReadyDocIds, setRagReadyDocIds] = useState(() => new Set())
 
   // 目录相关
   const [tocItems, setTocItems] = useState([])
@@ -118,11 +119,17 @@ function App() {
       extractError: '',
     })
 
-    await extractAllChunks(html, docId)
-
-    await indexRagDocument(docId, plainText, name).catch(err => {
+    const ragIndexPromise = indexRagDocument(docId, plainText, name).then(() => {
+      setRagReadyDocIds(prev => {
+        const next = new Set(prev)
+        next.add(docId)
+        return next
+      })
+    }).catch(err => {
       console.error('RAG 索引失败:', err)
     })
+
+    await Promise.all([extractAllChunks(html, docId), ragIndexPromise])
   }, [currentUser?.user_id, extractAllChunks])
 
   const {
@@ -288,6 +295,7 @@ function App() {
     setCurrentUser(null)
     resetDocumentState()
     setDocuments([])
+    setRagReadyDocIds(new Set())
     documentSnapshotsRef.current = new Map()
   }
 
@@ -373,6 +381,7 @@ function App() {
         extractError={extractError}
         docLoaded={docLoaded}
         docId={activeDocId}
+        ragReady={Boolean(activeDocId && ragReadyDocIds.has(activeDocId))}
         knowledgePoints={uniqueKPs}
         stats={stats}
         getKpStatus={getKpStatus}

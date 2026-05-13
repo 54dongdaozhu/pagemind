@@ -384,16 +384,25 @@ def stream_learning_agents(
                 state.update(agent_fn(state))
                 yield state["answer"]
             else:
-                messages, temp = _build_llm_messages(state)
-                answer_parts = []
-                for chunk in call_deepseek_stream(messages, temperature=temp):
-                    answer_parts.append(chunk)
-                    yield chunk
-                state.update({
-                    "answer": "".join(answer_parts),
-                    "active_agent": "SynthesisAgent" if state["intent"] in ["summarize", "compare"] else "TutorAgent",
-                    "stop_reason": "answered",
-                })
+                if not state["summary"] and not state["sources"]:
+                    answer = _fallback_answer(state["message"])
+                    state.update({
+                        "answer": answer,
+                        "active_agent": "SynthesisAgent" if state["intent"] in ["summarize", "compare"] else "TutorAgent",
+                        "stop_reason": "no_context",
+                    })
+                    yield answer
+                else:
+                    messages, temp = _build_llm_messages(state)
+                    answer_parts = []
+                    for chunk in call_deepseek_stream(messages, temperature=temp):
+                        answer_parts.append(chunk)
+                        yield chunk
+                    state.update({
+                        "answer": "".join(answer_parts),
+                        "active_agent": "SynthesisAgent" if state["intent"] in ["summarize", "compare"] else "TutorAgent",
+                        "stop_reason": "answered",
+                    })
             state["tools_used"] = _dedupe_tools(state["tools_used"])
             _log_stream_qa(state, start)
             yield _format_stream_metadata(state)

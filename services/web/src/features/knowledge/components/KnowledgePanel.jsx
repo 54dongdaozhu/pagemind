@@ -35,6 +35,7 @@ function KnowledgePanel({
   extractError,
   docLoaded,
   docId,
+  ragReady,
   knowledgePoints,
   stats,
   getKpStatus,
@@ -124,6 +125,7 @@ function KnowledgePanel({
         <ChatPanel
           docId={docId}
           docLoaded={docLoaded}
+          ragReady={ragReady}
           messages={chatMessages}
           setMessages={setChatMessages}
           loading={chatLoading}
