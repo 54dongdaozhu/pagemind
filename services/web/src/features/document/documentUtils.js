@@ -6,6 +6,10 @@ export function splitIntoChunks(html) {
   elements.forEach(el => {
     const text = el.textContent.trim()
     if (text.length > 0) blocks.push(text)
+    el.querySelectorAll('img[alt]').forEach(img => {
+      const alt = img.getAttribute('alt')?.trim()
+      if (alt) blocks.push(`[图片：${alt}]`)
+    })
   })
   const chunks = []
   let buffer = ''
@@ -30,6 +34,10 @@ export function htmlToPlainText(html) {
   elements.forEach(el => {
     const text = el.textContent.trim()
     if (text.length > 0) blocks.push(text)
+    el.querySelectorAll('img[alt]').forEach(img => {
+      const alt = img.getAttribute('alt')?.trim()
+      if (alt) blocks.push(`[图片：${alt}]`)
+    })
   })
   return blocks.join('\n\n')
 }

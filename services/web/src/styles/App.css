@@ -334,6 +334,17 @@ body {
   background: var(--accent-hover);
 }
 
+.upload-button.secondary {
+  background: #FFFFFF;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.upload-button.secondary:hover {
+  color: var(--text-primary);
+  background: var(--main-bg);
+}
+
 .user-menu {
   display: flex;
   align-items: center;
@@ -752,8 +763,10 @@ body {
 .document-content img {
   max-width: 100%;
   height: auto;
-  margin: 1em 0;
+  display: block;
+  margin: 1.25em auto;
   border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
 }
 
 /* ========== 知识点高亮 ========== */

@@ -38,6 +38,9 @@ function AppHeader({
         <label htmlFor="file-upload" className="upload-button">
           上传文档
         </label>
+        <label htmlFor="folder-upload" className="upload-button secondary">
+          上传文件夹
+        </label>
         <div className="user-menu" title={user?.email}>
           <span className="user-avatar">{(user?.username || user?.email || 'U').slice(0, 1).toUpperCase()}</span>
           <span className="user-name">{user?.username || user?.email}</span>
@@ -49,6 +52,15 @@ function AppHeader({
           id="file-upload"
           type="file"
           accept={ACCEPTED_DOCUMENT_TYPES}
+          onChange={onFileUpload}
+          style={{ display: 'none' }}
+        />
+        <input
+          id="folder-upload"
+          type="file"
+          webkitdirectory=""
+          directory=""
+          multiple
           onChange={onFileUpload}
           style={{ display: 'none' }}
         />

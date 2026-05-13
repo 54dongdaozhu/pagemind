@@ -6,7 +6,7 @@ function DocumentViewer({ documentAreaRef, docContentRef, loading, error, docLoa
       {!loading && !docLoaded && !error && (
         <div className="welcome">
           <div className="welcome-icon">📖</div>
-          <p className="welcome-text">上传 docx、pdf、txt 或 md 文档开始整理知识点</p>
+          <p className="welcome-text">上传 docx、pdf、txt、md、zip 或 Markdown 文件夹开始整理知识点</p>
           <p className="welcome-hint">单击高亮词语查看简介，双击深入讲解</p>
         </div>
       )}

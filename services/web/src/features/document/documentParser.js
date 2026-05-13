@@ -1,4 +1,9 @@
-const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md']
+import { markdownToHtml } from '../../utils/markdown'
+import { uploadImageAsset } from '../../api/assets'
+
+const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md', '.zip']
+const MARKDOWN_EXTENSIONS = ['.md', '.markdown']
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']
 const DOCX_STYLE_MAP = [
   "p[style-name='Title'] => h1:fresh",
   "p[style-name='标题'] => h1:fresh",
@@ -22,7 +27,7 @@ function getFileExtension(fileName) {
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value || '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -39,93 +44,75 @@ function paragraphsToHtml(text) {
     .join('')
 }
 
-function renderInlineMarkdown(text) {
-  return escapeHtml(text)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+function normalizePath(path) {
+  const decoded = safeDecodeURIComponent(String(path || ''))
+  const parts = []
+  for (const part of decoded.replaceAll('\\', '/').split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (parts.length === 0) return ''
+      parts.pop()
+      continue
+    }
+    parts.push(part)
+  }
+  return parts.join('/')
 }
 
-function flushList(htmlParts, listItems) {
-  if (listItems.length === 0) return
-  htmlParts.push(`<ul>${listItems.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</ul>`)
-  listItems.length = 0
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
-function markdownToHtml(markdown) {
-  const htmlParts = []
-  const paragraph = []
-  const listItems = []
-  let inCodeBlock = false
-  let codeLines = []
+function dirname(path) {
+  const normalized = normalizePath(path)
+  const slashIndex = normalized.lastIndexOf('/')
+  return slashIndex >= 0 ? normalized.slice(0, slashIndex) : ''
+}
 
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return
-    htmlParts.push(`<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`)
-    paragraph.length = 0
+function joinPath(basePath, relativePath) {
+  return normalizePath(basePath ? `${basePath}/${relativePath}` : relativePath)
+}
+
+function isImageFileName(fileName) {
+  return IMAGE_EXTENSIONS.includes(getFileExtension(fileName))
+}
+
+function getFilePath(file) {
+  return normalizePath(file.webkitRelativePath || file.relativePath || file.name)
+}
+
+async function createAssetMap(files) {
+  const assets = new Map()
+  await Promise.all(files.map(async file => {
+    const path = getFilePath(file)
+    if (!path || !isImageFileName(path)) return
+    const asset = await uploadImageAsset(file, path)
+    assets.set(path, asset.url)
+  }))
+  return assets
+}
+
+function pickMarkdownFile(files) {
+  const markdownFiles = files.filter(file => MARKDOWN_EXTENSIONS.includes(getFileExtension(file.name)))
+  if (markdownFiles.length === 0) return null
+  return markdownFiles.find(file => /(^|\/)readme\.md$/i.test(getFilePath(file))) || markdownFiles[0]
+}
+
+function createImageResolver(markdownPath, assets) {
+  const basePath = dirname(markdownPath)
+
+  return (rawSrc) => {
+    const src = String(rawSrc || '').trim()
+    if (/^(https?:\/\/|blob:)/i.test(src)) return src
+    if (/^(data:|javascript:|file:)/i.test(src)) return ''
+    const withoutHash = src.split('#')[0].split('?')[0]
+    const assetPath = joinPath(basePath, withoutHash)
+    return assets.get(assetPath) || assets.get(normalizePath(withoutHash)) || ''
   }
-
-  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
-    const trimmed = line.trim()
-
-    if (trimmed.startsWith('```')) {
-      if (inCodeBlock) {
-        htmlParts.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
-        codeLines = []
-        inCodeBlock = false
-      } else {
-        flushParagraph()
-        flushList(htmlParts, listItems)
-        inCodeBlock = true
-      }
-      continue
-    }
-
-    if (inCodeBlock) {
-      codeLines.push(line)
-      continue
-    }
-
-    if (!trimmed) {
-      flushParagraph()
-      flushList(htmlParts, listItems)
-      continue
-    }
-
-    const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed)
-    if (heading) {
-      flushParagraph()
-      flushList(htmlParts, listItems)
-      const level = heading[1].length
-      htmlParts.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`)
-      continue
-    }
-
-    const listItem = /^[-*+]\s+(.+)$/.exec(trimmed)
-    if (listItem) {
-      flushParagraph()
-      listItems.push(listItem[1])
-      continue
-    }
-
-    const quote = /^>\s?(.+)$/.exec(trimmed)
-    if (quote) {
-      flushParagraph()
-      flushList(htmlParts, listItems)
-      htmlParts.push(`<blockquote><p>${renderInlineMarkdown(quote[1])}</p></blockquote>`)
-      continue
-    }
-
-    paragraph.push(trimmed)
-  }
-
-  if (inCodeBlock) {
-    htmlParts.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
-  }
-  flushParagraph()
-  flushList(htmlParts, listItems)
-
-  return htmlParts.join('')
 }
 
 async function parseDocx(file) {
@@ -164,6 +151,45 @@ async function parsePdf(file) {
   return pages.join('')
 }
 
+async function parseZipBundle(file) {
+  const { default: JSZip } = await import('jszip')
+  const zip = await JSZip.loadAsync(await file.arrayBuffer())
+  const files = []
+
+  await Promise.all(Object.values(zip.files).map(async entry => {
+    if (entry.dir) return
+    const blob = await entry.async('blob')
+    files.push(new File([blob], entry.name.split('/').pop(), {
+      type: blob.type,
+      lastModified: file.lastModified,
+    }))
+    files[files.length - 1].relativePath = entry.name
+  }))
+
+  return parseMarkdownBundle(files, file.name)
+}
+
+async function parseMarkdownBundle(files, fallbackName) {
+  const markdownFile = pickMarkdownFile(files)
+  if (!markdownFile) {
+    throw new Error('未找到 Markdown 文件，请上传包含 .md 的文件夹或 zip')
+  }
+
+  const assets = await createAssetMap(files)
+  const markdownPath = getFilePath(markdownFile)
+  const rawMarkdown = await markdownFile.text()
+  const html = markdownToHtml(rawMarkdown, {
+    resolveImageUrl: createImageResolver(markdownPath, assets),
+  })
+
+  return {
+    name: markdownFile.name || fallbackName,
+    html,
+    rawText: rawMarkdown,
+    assets,
+  }
+}
+
 export async function parseDocumentFile(file) {
   const extension = getFileExtension(file.name)
 
@@ -171,10 +197,25 @@ export async function parseDocumentFile(file) {
     throw new Error(`请上传 ${SUPPORTED_DOCUMENT_LABEL} 格式的文件`)
   }
 
-  if (extension === '.docx') return parseDocx(file)
-  if (extension === '.pdf') return parsePdf(file)
+  if (extension === '.docx') return { name: file.name, html: await parseDocx(file) }
+  if (extension === '.pdf') return { name: file.name, html: await parsePdf(file) }
+  if (extension === '.zip') return parseZipBundle(file)
 
   const text = await file.text()
-  if (extension === '.md') return markdownToHtml(text)
-  return paragraphsToHtml(text)
+  if (MARKDOWN_EXTENSIONS.includes(extension)) {
+    return {
+      name: file.name,
+      html: markdownToHtml(text),
+      rawText: text,
+      assets: new Map(),
+    }
+  }
+  return { name: file.name, html: paragraphsToHtml(text), rawText: text }
+}
+
+export async function parseDocumentSelection(fileList) {
+  const files = Array.from(fileList || [])
+  if (files.length === 0) return null
+  if (files.length === 1 && !files[0].webkitRelativePath) return parseDocumentFile(files[0])
+  return parseMarkdownBundle(files, files[0]?.name)
 }

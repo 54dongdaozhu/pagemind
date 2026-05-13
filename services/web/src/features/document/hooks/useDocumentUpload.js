@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { parseDocumentFile, SUPPORTED_DOCUMENT_LABEL } from '../documentParser'
+import { parseDocumentSelection, SUPPORTED_DOCUMENT_LABEL } from '../documentParser'
 
 
 export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded }) {
@@ -9,22 +9,24 @@ export function useDocumentUpload({ docContentRef, onBeforeLoad, onHtmlLoaded })
   const [error, setError] = useState('')
 
   const handleFileUpload = useCallback(async (event) => {
-    const file = event.target.files[0]
-    if (!file) return
+    const files = event.target.files
+    if (!files || files.length === 0) return
 
     setError('')
     setLoading(true)
-    setFileName(file.name)
+    setFileName(files.length === 1 ? files[0].name : 'Markdown 文件夹')
     setDocLoaded(false)
     onBeforeLoad()
 
     if (docContentRef.current) docContentRef.current.innerHTML = ''
 
     try {
-      const html = await parseDocumentFile(file)
-      if (docContentRef.current) docContentRef.current.innerHTML = html
+      const document = await parseDocumentSelection(files)
+      if (!document) return
+      setFileName(document.name)
+      if (docContentRef.current) docContentRef.current.innerHTML = document.html
       setDocLoaded(true)
-      await onHtmlLoaded(html, file)
+      await onHtmlLoaded(document)
     } catch (err) {
       setError('文档解析失败：' + (err.message || `请上传 ${SUPPORTED_DOCUMENT_LABEL} 格式的文件`))
     } finally {

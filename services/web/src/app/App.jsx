@@ -92,16 +92,19 @@ function App() {
     highlightedIdsRef.current = new Set()
   }, [resetDeep, resetExtraction])
 
-  const handleHtmlLoaded = useCallback(async (html, file) => {
+  const handleHtmlLoaded = useCallback(async (document) => {
+    const { html, name, rawText, assets } = document
     const plainText = htmlToPlainText(html)
-    const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${file.name}:${plainText}`)
+    const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${name}:${plainText}`)
     setActiveDocId(docId)
     setDocuments(prev => {
       const nextDoc = {
         id: docId,
-        name: file.name,
+        name,
         html,
         plainText,
+        rawText,
+        assets,
       }
       const index = prev.findIndex(doc => doc.id === docId)
       if (index === -1) return [nextDoc, ...prev]
@@ -117,7 +120,7 @@ function App() {
 
     await extractAllChunks(html, docId)
 
-    await indexRagDocument(docId, plainText, file.name).catch(err => {
+    await indexRagDocument(docId, plainText, name).catch(err => {
       console.error('RAG 索引失败:', err)
     })
   }, [currentUser?.user_id, extractAllChunks])
