@@ -792,6 +792,13 @@ def extract_knowledge_batch(
         ]
         if all_chunk_kps:
             refinement_run_id = start_refinement_run(user_id, doc_id, all_chunk_kps, parent_run_id=run_id)
+            if run_id:
+                key = _extraction_progress_key(run_id)
+                p = _load_progress(key)
+                if p:
+                    p["refinement_run_id"] = refinement_run_id
+                    p["updated_at"] = _now_iso()
+                    set_json(key, p, _PROGRESS_TTL_SECONDS)
             if not enqueue_job(run_phase2_and_save, user_id, doc_id, all_chunk_kps, refinement_run_id):
                 # Redis/RQ 不可用时同步执行（仅 dev 环境）
                 try:
@@ -800,6 +807,41 @@ def extract_knowledge_batch(
                     logger.exception("[Phase2] sync fallback failed: %s", e)
 
     return ExtractBatchResponse(results=results)
+
+
+def _close_extraction_run(run_id: str, user_id: str, doc_id: str) -> None:
+    """结束 Phase 1 run，不触发 Phase 2（Phase 2 已由 extract_knowledge_batch 启动）。"""
+    key = _extraction_progress_key(run_id)
+    progress = _load_progress(key)
+    if not progress:
+        return
+    failed = int(progress.get("failed", 0))
+    done = int(progress.get("done", 0))
+    status = "failed" if done == 0 and failed > 0 else "degraded" if failed > 0 else "completed"
+    output_data = {
+        "total": int(progress.get("total", 0)),
+        "done": done,
+        "failed": failed,
+        "knowledge_count": int(progress.get("knowledge_count", 0)),
+        "refinement_run_id": progress.get("refinement_run_id"),
+        "errors": progress.get("errors", []),
+    }
+    progress.update({"status": status, "updated_at": _now_iso()})
+    set_json(key, progress, _PROGRESS_TTL_SECONDS)
+    db_log.finish_workflow_run(
+        run_id,
+        success=status != "failed",
+        status=status,
+        output_data=output_data,
+        error_details={"errors": output_data["errors"]} if status == "failed" else None,
+    )
+    db_log.log_event(
+        entity_type="workflow_run",
+        entity_id=run_id,
+        event_type=f"knowledge.extraction.{status}",
+        user_id=user_id,
+        after_state={"doc_id": doc_id, **output_data},
+    )
 
 
 def extract_knowledge_for_document(
@@ -838,7 +880,16 @@ def extract_knowledge_for_document(
         for row in rows
         if isinstance(row.get("content"), str) and row["content"].strip()
     ]
-    return extract_knowledge_batch(user_id, canonical_chunks)
+    if not canonical_chunks:
+        return ExtractBatchResponse(results=[])
+
+    run_info = start_knowledge_extraction_run(
+        user_id, doc_id, canonical_chunks, title=title, source="backend_document"
+    )
+    run_id = run_info["run_id"]
+    result = extract_knowledge_batch(user_id, canonical_chunks, run_id=run_id)
+    _close_extraction_run(run_id, user_id, doc_id)
+    return result
 
 
 def _canonical_extract_chunk_id(user_id: str, doc_id: str, row: dict) -> str:

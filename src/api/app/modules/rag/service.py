@@ -1,12 +1,13 @@
 import re
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from app.shared.schemas import RagSource
 from app.shared.llm import call_deepseek
 from app.core.config import EMBEDDING_MODEL
-from app.shared.cache import RAG_QUERY_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
+from app.shared.cache import ANALYSIS_REPORT_CACHE_TTL_SECONDS, RAG_QUERY_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
 from app.shared import db_log
 from app.shared.job_queue import enqueue_job
 from app.modules.rag.chunking import normalize_text, split_text_for_rag
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 _rag_enrichment_executor = ThreadPoolExecutor(max_workers=2)
 
 _RAG_ENRICHMENT_STATUS_TTL = 60 * 60 * 24 * 3  # 3 天
+_FULL_SUMMARY_STATUS_TTL = 60 * 60 * 24        # 24 小时
+_FULL_SUMMARY_RESULT_TTL = ANALYSIS_REPORT_CACHE_TTL_SECONDS  # 24 小时
+# 全文总结单次执行预算：每批最多 60s（LLM timeout），超出此时间后不再启动新批次
+_FULL_SUMMARY_TIMEOUT_SECONDS = 80
 
 
 def _now_iso() -> str:
@@ -43,6 +48,28 @@ def _save_enrichment_status(user_id: str, doc_id: str, status: dict) -> None:
 
 def get_rag_enrichment_status(user_id: str, doc_id: str) -> dict:
     data = get_json(_rag_enrichment_status_key(user_id, doc_id))
+    if isinstance(data, dict):
+        return data
+    return {"doc_id": doc_id, "status": "unknown", "chunk_count": None, "error": None, "updated_at": None}
+
+
+def _full_summary_status_key(user_id: str, doc_id: str) -> str:
+    return f"summary:full:status:user:{user_id}:doc:{doc_id}"
+
+
+def _full_summary_cache_key(user_id: str, doc_id: str, request: str) -> str:
+    return f"summary:full:result:{stable_hash({'user_id': user_id, 'doc_id': doc_id, 'request': request})}"
+
+
+def _save_full_summary_status(user_id: str, doc_id: str, status: dict) -> None:
+    try:
+        set_json(_full_summary_status_key(user_id, doc_id), status, _FULL_SUMMARY_STATUS_TTL)
+    except Exception as e:
+        logger.warning("[FullSummary] status save failed for doc=%s: %s", doc_id, e)
+
+
+def get_full_summary_status(user_id: str, doc_id: str) -> dict:
+    data = get_json(_full_summary_status_key(user_id, doc_id))
     if isinstance(data, dict):
         return data
     return {"doc_id": doc_id, "status": "unknown", "chunk_count": None, "error": None, "updated_at": None}
@@ -94,6 +121,11 @@ def index_document_text(
     chunk_size: int = 800,
     chunk_overlap: int = 120,
 ) -> dict:
+    # 幂等性：已完成的文档跳过重新索引，避免前端重传时 status 倒退回 pending
+    existing = get_rag_enrichment_status(user_id, doc_id)
+    if existing.get("status") == "completed":
+        return {"indexed_count": existing.get("chunk_count") or 0, "enrichment_status": "completed"}
+
     canonical_chunks = _normalize_input_chunks(chunks)
     if canonical_chunks:
         normalized_text = normalize_text(text or "\n\n".join(canonical_chunks))
@@ -258,26 +290,63 @@ def retrieve_relevant_chunks(user_id: str, doc_id: str, question: str, top_k: in
 
 
 def summarize_full_document(user_id: str, doc_id: str, request: str = "") -> dict:
+    cache_key = _full_summary_cache_key(user_id, doc_id, request)
+    cached = get_json(cache_key)
+    if isinstance(cached, dict):
+        return cached
+
     rows = list_document_chunks(user_id, doc_id)
     if not rows:
         summary = get_document_summary(user_id, doc_id)
-        return {
-            "summary": summary,
-            "chunk_count": 0,
-            "batch_count": 0,
-        }
+        return {"summary": summary, "chunk_count": 0, "batch_count": 0}
 
-    batches = _batch_chunk_rows(rows)
-    partials = [
-        _summarize_chunk_batch(batch=batch, batch_index=idx, batch_count=len(batches))
-        for idx, batch in enumerate(batches, start=1)
-    ]
-    merged = _merge_partial_summaries(partials, request=request)
-    return {
-        "summary": merged,
+    _save_full_summary_status(user_id, doc_id, {
+        "doc_id": doc_id,
+        "status": "running",
         "chunk_count": len(rows),
-        "batch_count": len(batches),
-    }
+        "error": None,
+        "updated_at": _now_iso(),
+    })
+    try:
+        deadline = time.monotonic() + _FULL_SUMMARY_TIMEOUT_SECONDS
+        batches = _batch_chunk_rows(rows)
+        partials = []
+        for idx, batch in enumerate(batches, start=1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 62:  # 不足以完成一个完整批次（LLM timeout=60s），停止
+                logger.warning(
+                    "[FullSummary] deadline reached after %s/%s batches for doc=%s",
+                    idx - 1, len(batches), doc_id,
+                )
+                break
+            partials.append(_summarize_chunk_batch(batch=batch, batch_index=idx, batch_count=len(batches)))
+
+        if not partials:
+            raise RuntimeError("全文总结超时：未能完成任何批次")
+
+        merged = _merge_partial_summaries(partials, request=request)
+        result = {"summary": merged, "chunk_count": len(rows), "batch_count": len(batches)}
+        set_json(cache_key, result, _FULL_SUMMARY_RESULT_TTL)
+        _save_full_summary_status(user_id, doc_id, {
+            "doc_id": doc_id,
+            "status": "completed",
+            "chunk_count": len(rows),
+            "error": None,
+            "updated_at": _now_iso(),
+        })
+        return result
+    except Exception as exc:
+        _save_full_summary_status(user_id, doc_id, {
+            "doc_id": doc_id,
+            "status": "failed",
+            "chunk_count": len(rows),
+            "error": str(exc)[:300],
+            "updated_at": _now_iso(),
+        })
+        # 降级：返回 DB 中已有的快速摘要，而不是向上抛 500
+        fallback = get_document_summary(user_id, doc_id) or ""
+        logger.warning("[FullSummary] falling back to DB summary for doc=%s: %s", doc_id, exc)
+        return {"summary": fallback, "chunk_count": len(rows), "batch_count": 0}
 
 
 def answer_with_rag(user_id: str, doc_id: str, question: str, top_k: int = 3) -> tuple[str, list[RagSource]]:
