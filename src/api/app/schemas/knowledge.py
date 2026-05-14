@@ -63,6 +63,7 @@ class ExtractRequest(BaseModel):
     chunk_id: str
     doc_id: str | None = None
     chunk_index: int | None = None
+    run_id: str | None = None
 
 
 class ExtractBatchItem(BaseModel):
@@ -74,6 +75,40 @@ class ExtractBatchItem(BaseModel):
 
 class ExtractBatchRequest(BaseModel):
     chunks: List[ExtractBatchItem]
+    run_id: str | None = None
+
+
+class ExtractStartRequest(BaseModel):
+    doc_id: str
+    chunks: List[ExtractBatchItem]
+    title: str | None = None
+    source: str = "frontend_chunks"
+
+
+class ExtractStartResponse(BaseModel):
+    run_id: str
+    status: str
+    total: int
+
+
+class ExtractFinalizeRequest(BaseModel):
+    run_id: str
+    doc_id: str
+    chunks: List[ExtractBatchItem]
+
+
+class ExtractStatusResponse(BaseModel):
+    run_id: str
+    doc_id: str | None = None
+    workflow_type: str = "knowledge_extraction"
+    status: str
+    total: int = 0
+    done: int = 0
+    failed: int = 0
+    knowledge_count: int = 0
+    refinement_run_id: str | None = None
+    errors: List[dict] = []
+    updated_at: str | None = None
 
 
 class ExtractDocumentRequest(BaseModel):
@@ -105,6 +140,8 @@ class DocKPResponse(BaseModel):
     doc_id: str
     knowledge_points: List[KnowledgePoint]
     is_refined: bool = False
+    refinement_status: str = "not_started"
+    refinement_run_id: str | None = None
 
 
 class ExplainDeepRequest(BaseModel):

@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.agents.knowledge_agents import discover_knowledge_points, finalize_knowledge_items, refine_document_knowledge
 from app.core.config import EXTRACT_MAX_CONCURRENCY
-from app.core.database import ChunkKnowledgePoint, ExtractCache, KnowledgePoint as KnowledgePointRow, RagChunk, get_db
+from app.core.database import ChunkKnowledgePoint, ExtractCache, KnowledgePoint as KnowledgePointRow, RagChunk, WorkflowRun, get_db
 from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
 from app.services import db_log
 from app.services.cache_service import ANALYSIS_REPORT_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
@@ -34,10 +34,27 @@ _llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
 # 缓存 TTL：7 天（同一 chunk 内容不会频繁变动）
 _CACHE_TTL_DAYS = 7
 _DOC_KP_CACHE_TTL = ANALYSIS_REPORT_CACHE_TTL_SECONDS  # 24h
+_PROGRESS_TTL_SECONDS = 60 * 60 * 24
 
 
 def _doc_kp_redis_key(user_id: str, doc_id: str) -> str:
     return f"doc_kps:user:{user_id}:doc:{doc_id}"
+
+
+def _extraction_progress_key(run_id: str) -> str:
+    return f"progress:knowledge_extraction:{run_id}"
+
+
+def _refinement_progress_key(run_id: str) -> str:
+    return f"progress:knowledge_refinement:{run_id}"
+
+
+def _doc_refinement_progress_key(user_id: str, doc_id: str) -> str:
+    return f"progress:knowledge_refinement:user:{user_id}:doc:{doc_id}"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def get_refined_doc_kps(user_id: str, doc_id: str) -> list[dict] | None:
@@ -48,18 +65,328 @@ def get_refined_doc_kps(user_id: str, doc_id: str) -> list[dict] | None:
     return None
 
 
+def get_refinement_status(user_id: str, doc_id: str) -> dict | None:
+    data = get_json(_doc_refinement_progress_key(user_id, doc_id))
+    return data if isinstance(data, dict) else None
+
+
 def save_refined_doc_kps(user_id: str, doc_id: str, kps: list[dict]) -> None:
     """将 Phase 2 精炼结果写入 Redis。"""
     set_json(_doc_kp_redis_key(user_id, doc_id), kps, _DOC_KP_CACHE_TTL)
 
 
-def run_phase2_and_save(user_id: str, doc_id: str, all_chunk_kps: list[dict]) -> None:
+def _load_progress(key: str) -> dict:
+    progress = get_json(key)
+    return progress if isinstance(progress, dict) else {}
+
+
+def _public_progress(progress: dict) -> dict:
+    return {
+        "run_id": progress.get("run_id", ""),
+        "doc_id": progress.get("doc_id"),
+        "workflow_type": progress.get("workflow_type", "knowledge_extraction"),
+        "status": progress.get("status", "unknown"),
+        "total": int(progress.get("total", 0) or 0),
+        "done": int(progress.get("done", 0) or 0),
+        "failed": int(progress.get("failed", 0) or 0),
+        "knowledge_count": int(progress.get("knowledge_count", 0) or 0),
+        "refinement_run_id": progress.get("refinement_run_id"),
+        "errors": list(progress.get("errors", []) or []),
+        "updated_at": progress.get("updated_at"),
+    }
+
+
+def _save_refinement_progress(user_id: str, doc_id: str, run_id: str, progress: dict) -> None:
+    set_json(_refinement_progress_key(run_id), progress, _PROGRESS_TTL_SECONDS)
+    set_json(_doc_refinement_progress_key(user_id, doc_id), progress, _PROGRESS_TTL_SECONDS)
+
+
+def _record_extraction_chunk_success(
+    run_id: str | None,
+    doc_id: str | None,
+    chunk_index: int | None,
+    knowledge_count: int,
+) -> None:
+    if not run_id or chunk_index is None:
+        return
+    key = _extraction_progress_key(run_id)
+    progress = _load_progress(key)
+    if not progress:
+        return
+    chunk_counts = progress.get("chunk_counts")
+    if not isinstance(chunk_counts, dict):
+        chunk_counts = {}
+    chunk_key = str(chunk_index)
+    chunk_counts[chunk_key] = knowledge_count
+    progress["chunk_counts"] = chunk_counts
+    progress["done"] = len(chunk_counts)
+    progress["knowledge_count"] = sum(int(value or 0) for value in chunk_counts.values())
+    progress["doc_id"] = progress.get("doc_id") or doc_id
+    progress["status"] = "running"
+    progress["updated_at"] = _now_iso()
+    set_json(key, progress, _PROGRESS_TTL_SECONDS)
+
+
+def _record_extraction_chunk_error(
+    run_id: str | None,
+    doc_id: str | None,
+    chunk_index: int | None,
+    message: str,
+) -> None:
+    if not run_id or chunk_index is None:
+        return
+    key = _extraction_progress_key(run_id)
+    progress = _load_progress(key)
+    if not progress:
+        return
+    errors = progress.get("errors")
+    if not isinstance(errors, list):
+        errors = []
+    errors = [item for item in errors if item.get("chunk_index") != chunk_index]
+    errors.append({"chunk_index": chunk_index, "message": message})
+    progress["errors"] = errors[-20:]
+    progress["failed"] = len(errors)
+    progress["doc_id"] = progress.get("doc_id") or doc_id
+    progress["updated_at"] = _now_iso()
+    set_json(key, progress, _PROGRESS_TTL_SECONDS)
+
+
+def start_knowledge_extraction_run(
+    user_id: str,
+    doc_id: str,
+    chunks: list[ExtractBatchItem],
+    title: str | None = None,
+    source: str = "frontend_chunks",
+) -> dict:
+    total = len(chunks)
+    run_id = db_log.create_workflow_run(
+        workflow_type="knowledge_extraction",
+        user_id=user_id,
+        doc_id=scoped_doc_id(user_id, doc_id),
+        input_data={"doc_id": doc_id, "title": title, "chunk_count": total, "source": source},
+    )
+    progress = {
+        "run_id": run_id,
+        "doc_id": doc_id,
+        "workflow_type": "knowledge_extraction",
+        "status": "running",
+        "total": total,
+        "done": 0,
+        "failed": 0,
+        "knowledge_count": 0,
+        "chunk_counts": {},
+        "errors": [],
+        "started_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    set_json(_extraction_progress_key(run_id), progress, _PROGRESS_TTL_SECONDS)
+    db_log.log_event(
+        entity_type="workflow_run",
+        entity_id=run_id,
+        event_type="knowledge.extraction.started",
+        user_id=user_id,
+        after_state={"doc_id": doc_id, "chunk_count": total},
+    )
+    return {"run_id": run_id, "status": "running", "total": total}
+
+
+def get_extraction_status(run_id: str) -> dict:
+    progress = get_json(_extraction_progress_key(run_id))
+    if isinstance(progress, dict):
+        return _public_progress(progress)
+
+    with get_db() as db:
+        run = db.get(WorkflowRun, run_id)
+    if run is None:
+        return {
+            "run_id": run_id,
+            "workflow_type": "knowledge_extraction",
+            "status": "unknown",
+            "total": 0,
+            "done": 0,
+            "failed": 0,
+            "knowledge_count": 0,
+            "errors": [],
+            "updated_at": None,
+        }
+    output = run.output_data if isinstance(run.output_data, dict) else {}
+    return {
+        "run_id": run_id,
+        "doc_id": run.doc_id,
+        "workflow_type": run.workflow_type,
+        "status": run.status,
+        "total": output.get("total", 0),
+        "done": output.get("done", 0),
+        "failed": output.get("failed", 0),
+        "knowledge_count": output.get("knowledge_count", 0),
+        "refinement_run_id": output.get("refinement_run_id"),
+        "errors": output.get("errors", []),
+        "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+    }
+
+
+def finalize_knowledge_extraction(
+    user_id: str,
+    run_id: str,
+    doc_id: str,
+    chunks: list[ExtractBatchItem],
+) -> dict:
+    all_chunk_kps: list[dict] = []
+    for chunk in chunks:
+        cache_key = _scoped_chunk_id(user_id, chunk.chunk_id)
+        knowledge_points = _load_from_cache(cache_key, chunk.text)
+        if knowledge_points is None:
+            response = extract_knowledge_from_text(
+                user_id,
+                chunk.chunk_id,
+                chunk.text,
+                doc_id=chunk.doc_id or doc_id,
+                chunk_index=chunk.chunk_index,
+                run_id=run_id,
+            )
+            knowledge_points = response.knowledge_points
+        else:
+            _record_extraction_chunk_success(run_id, doc_id, chunk.chunk_index, len(knowledge_points))
+        for kp in knowledge_points:
+            all_chunk_kps.append({
+                **kp.model_dump(),
+                "chunk_id": chunk.chunk_id,
+                "chunk_index": chunk.chunk_index,
+            })
+
+    progress = _load_progress(_extraction_progress_key(run_id))
+    failed = int(progress.get("failed", 0))
+    done = int(progress.get("done", 0))
+    total = int(progress.get("total", len(chunks)))
+    status = "failed" if done == 0 and failed > 0 else "degraded" if failed > 0 else "completed"
+    refinement_run_id = None
+    if all_chunk_kps:
+        refinement_run_id = start_refinement_run(user_id, doc_id, all_chunk_kps, parent_run_id=run_id)
+        if not enqueue_job(run_phase2_and_save, user_id, doc_id, all_chunk_kps, refinement_run_id):
+            try:
+                run_phase2_and_save(user_id, doc_id, all_chunk_kps, refinement_run_id)
+            except Exception as e:
+                logger.exception("[Phase2] finalize fallback failed: %s", e)
+
+    output_data = {
+        "total": total,
+        "done": done,
+        "failed": failed,
+        "knowledge_count": int(progress.get("knowledge_count", len(all_chunk_kps))),
+        "errors": progress.get("errors", []),
+        "refinement_run_id": refinement_run_id,
+    }
+    progress.update({"status": status, "refinement_run_id": refinement_run_id, "updated_at": _now_iso()})
+    set_json(_extraction_progress_key(run_id), progress, _PROGRESS_TTL_SECONDS)
+    db_log.finish_workflow_run(
+        run_id,
+        success=status != "failed",
+        status=status,
+        output_data=output_data,
+        error_details={"errors": progress.get("errors", [])} if status == "failed" else None,
+    )
+    db_log.log_event(
+        entity_type="workflow_run",
+        entity_id=run_id,
+        event_type=f"knowledge.extraction.{status}",
+        user_id=user_id,
+        after_state=output_data,
+    )
+    return _public_progress(progress)
+
+
+def start_refinement_run(
+    user_id: str,
+    doc_id: str,
+    all_chunk_kps: list[dict],
+    parent_run_id: str | None = None,
+) -> str:
+    run_id = db_log.create_workflow_run(
+        workflow_type="knowledge_refinement",
+        user_id=user_id,
+        doc_id=scoped_doc_id(user_id, doc_id),
+        input_data={
+            "doc_id": doc_id,
+            "parent_run_id": parent_run_id,
+            "knowledge_count": len(all_chunk_kps),
+        },
+    )
+    progress = {
+        "run_id": run_id,
+        "doc_id": doc_id,
+        "workflow_type": "knowledge_refinement",
+        "status": "running",
+        "total": len(all_chunk_kps),
+        "done": 0,
+        "failed": 0,
+        "knowledge_count": len(all_chunk_kps),
+        "refined_count": 0,
+        "parent_run_id": parent_run_id,
+        "errors": [],
+        "started_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    _save_refinement_progress(user_id, doc_id, run_id, progress)
+    db_log.log_event(
+        entity_type="workflow_run",
+        entity_id=run_id,
+        event_type="knowledge.refinement.started",
+        user_id=user_id,
+        after_state={"doc_id": doc_id, "knowledge_count": len(all_chunk_kps), "parent_run_id": parent_run_id},
+    )
+    return run_id
+
+
+def run_phase2_and_save(
+    user_id: str,
+    doc_id: str,
+    all_chunk_kps: list[dict],
+    run_id: str | None = None,
+) -> None:
     """Phase 2 任务入口（由 job_queue 异步执行）。"""
+    if run_id is None:
+        run_id = start_refinement_run(user_id, doc_id, all_chunk_kps)
+    progress = _load_progress(_refinement_progress_key(run_id))
+    progress.update({"status": "running", "updated_at": _now_iso()})
+    _save_refinement_progress(user_id, doc_id, run_id, progress)
     try:
         refined = refine_document_knowledge(user_id, doc_id, all_chunk_kps)
         save_refined_doc_kps(user_id, doc_id, refined)
+        progress.update({
+            "status": "completed",
+            "done": len(all_chunk_kps),
+            "refined_count": len(refined),
+            "updated_at": _now_iso(),
+        })
+        _save_refinement_progress(user_id, doc_id, run_id, progress)
+        db_log.finish_workflow_run(
+            run_id,
+            status="completed",
+            output_data={"input_count": len(all_chunk_kps), "refined_count": len(refined)},
+        )
+        db_log.log_event(
+            entity_type="workflow_run",
+            entity_id=run_id,
+            event_type="knowledge.refinement.completed",
+            user_id=user_id,
+            after_state={"doc_id": doc_id, "refined_count": len(refined)},
+        )
         logger.info("[Phase2] saved %s refined KPs for doc=%s", len(refined), doc_id)
     except Exception as e:
+        progress.update({
+            "status": "failed",
+            "failed": 1,
+            "errors": [{"message": str(e)}],
+            "updated_at": _now_iso(),
+        })
+        _save_refinement_progress(user_id, doc_id, run_id, progress)
+        db_log.finish_workflow_run(
+            run_id,
+            success=False,
+            status="failed",
+            output_data={"input_count": len(all_chunk_kps), "refined_count": 0},
+            error_details={"error": str(e)},
+        )
         logger.exception("[Phase2] failed for doc=%s: %s", doc_id, e)
 
 
@@ -319,6 +646,7 @@ def extract_knowledge_from_text(
     text: str,
     doc_id: str | None = None,
     chunk_index: int | None = None,
+    run_id: str | None = None,
 ) -> ExtractResponse:
     text = text.strip()
     cache_key = _scoped_chunk_id(user_id, chunk_id)
@@ -334,6 +662,7 @@ def extract_knowledge_from_text(
                 doc_id,
                 chunk_index,
             )
+            _record_extraction_chunk_success(run_id, doc_id, chunk_index, len(cached_points))
             return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=cached_points)
 
     cached = _load_from_cache(cache_key, text)
@@ -348,9 +677,11 @@ def extract_knowledge_from_text(
             doc_id,
             chunk_index,
         )
+        _record_extraction_chunk_success(run_id, doc_id, chunk_index, len(cached))
         return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=cached)
 
     if len(text) < 30:
+        _record_extraction_chunk_success(run_id, doc_id, chunk_index, 0)
         return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=[])
 
     try:
@@ -359,6 +690,7 @@ def extract_knowledge_from_text(
         knowledge_points = _to_knowledge_points(kps_data, text)
     except Exception as e:
         logger.exception("Knowledge agent extraction failed: %s", e)
+        _record_extraction_chunk_error(run_id, doc_id, chunk_index, str(e))
         knowledge_points = []
 
     with _extract_cache_lock:
@@ -372,6 +704,7 @@ def extract_knowledge_from_text(
         chunk_index,
         save_cache=True,
     )
+    _record_extraction_chunk_success(run_id, doc_id, chunk_index, len(knowledge_points))
 
     return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=knowledge_points)
 
@@ -379,6 +712,7 @@ def extract_knowledge_from_text(
 def extract_knowledge_batch(
     user_id: str,
     chunks: list[ExtractBatchItem],
+    run_id: str | None = None,
 ) -> ExtractBatchResponse:
     if not chunks:
         return ExtractBatchResponse(results=[])
@@ -393,6 +727,7 @@ def extract_knowledge_batch(
                     chunk.text,
                     doc_id=chunk.doc_id,
                     chunk_index=chunk.chunk_index,
+                    run_id=run_id,
                 ),
                 chunks,
             )
@@ -407,10 +742,11 @@ def extract_knowledge_batch(
             for kp in r.knowledge_points
         ]
         if all_chunk_kps:
-            if not enqueue_job(run_phase2_and_save, user_id, doc_id, all_chunk_kps):
+            refinement_run_id = start_refinement_run(user_id, doc_id, all_chunk_kps, parent_run_id=run_id)
+            if not enqueue_job(run_phase2_and_save, user_id, doc_id, all_chunk_kps, refinement_run_id):
                 # Redis/RQ 不可用时同步执行（仅 dev 环境）
                 try:
-                    run_phase2_and_save(user_id, doc_id, all_chunk_kps)
+                    run_phase2_and_save(user_id, doc_id, all_chunk_kps, refinement_run_id)
                 except Exception as e:
                     logger.exception("[Phase2] sync fallback failed: %s", e)
 

@@ -1,18 +1,47 @@
 import { apiFetch, postJson } from './client'
 
 
-export function extractKnowledge(text, chunkId, docId, chunkIndex) {
+export function startKnowledgeExtraction(docId, chunks, title) {
+  return postJson('/api/extract-knowledge/start', {
+    doc_id: docId,
+    chunks,
+    title,
+    source: 'frontend_chunks',
+  })
+}
+
+
+export function extractKnowledge(text, chunkId, docId, chunkIndex, runId = null) {
   return postJson('/api/extract-knowledge', {
     text,
     chunk_id: chunkId,
     doc_id: docId,
     chunk_index: chunkIndex,
+    run_id: runId,
   })
 }
 
 
-export function extractKnowledgeBatch(chunks) {
-  return postJson('/api/extract-knowledge-batch', { chunks })
+export function extractKnowledgeBatch(chunks, runId = null) {
+  return postJson('/api/extract-knowledge-batch', { chunks, run_id: runId })
+}
+
+
+export function finalizeKnowledgeExtraction(runId, docId, chunks) {
+  return postJson('/api/extract-knowledge/finalize', {
+    run_id: runId,
+    doc_id: docId,
+    chunks,
+  })
+}
+
+
+export function fetchKnowledgeExtractionStatus(runId) {
+  return apiFetch(`/api/extract-knowledge/status?run_id=${encodeURIComponent(runId)}`)
+    .then(response => {
+      if (!response.ok) throw new Error(`请求失败: ${response.status}`)
+      return response.json()
+    })
 }
 
 

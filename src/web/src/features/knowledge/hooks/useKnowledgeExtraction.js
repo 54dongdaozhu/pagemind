@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
-import { extractKnowledge, extractKnowledgeBatch } from '../../../api/knowledge'
+import {
+  extractKnowledge,
+  finalizeKnowledgeExtraction,
+  startKnowledgeExtraction,
+} from '../../../api/knowledge'
 import { splitIntoChunks } from '../../document/documentUtils'
 import { hashString } from '../../../utils/hash'
 
@@ -8,10 +12,10 @@ import { hashString } from '../../../utils/hash'
 const EXTRACTION_CONCURRENCY = 3
 
 
-function triggerDocumentRefinement(batchItems) {
-  if (!batchItems.length) return
-  extractKnowledgeBatch(batchItems).catch(err => {
-    console.warn('文档级知识点精炼触发失败:', err)
+function finalizeDocumentExtraction(runId, docId, batchItems) {
+  if (!runId || !docId || !batchItems.length) return
+  finalizeKnowledgeExtraction(runId, docId, batchItems).catch(err => {
+    console.warn('知识提取工作流收尾失败:', err)
   })
 }
 
@@ -63,6 +67,13 @@ export function useKnowledgeExtraction() {
       doc_id: docId,
       chunk_index: index,
     }))
+    let backendRunId = null
+    try {
+      const started = await startKnowledgeExtraction(docId, batchItems, options.title)
+      backendRunId = started.run_id
+    } catch (err) {
+      console.warn('知识提取工作流启动失败，将继续使用本地进度:', err)
+    }
     let nextChunkIndex = 0
     let completed = 0
 
@@ -76,7 +87,7 @@ export function useKnowledgeExtraction() {
         nextChunkIndex += 1
 
         try {
-          const data = await extractKnowledge(item.text, item.chunk_id, item.doc_id, item.chunk_index)
+          const data = await extractKnowledge(item.text, item.chunk_id, item.doc_id, item.chunk_index, backendRunId)
           kpsByChunk[item.chunk_index] = (data.knowledge_points || []).map(kp => ({
             ...kp,
             chunkIndex: item.chunk_index,
@@ -106,7 +117,7 @@ export function useKnowledgeExtraction() {
     try {
       const workerCount = Math.min(EXTRACTION_CONCURRENCY, batchItems.length)
       await Promise.all(Array.from({ length: workerCount }, extractNextChunk))
-      triggerDocumentRefinement(batchItems)
+      finalizeDocumentExtraction(backendRunId, docId, batchItems)
       return true
     } catch (err) {
       console.error('文档知识点提取出错:', err)

@@ -334,6 +334,7 @@ def finish_workflow_run(
     run_id: str,
     *,
     success: bool = True,
+    status: str | None = None,
     output_data: Any = None,
     error_details: Any = None,
 ) -> None:
@@ -341,18 +342,19 @@ def finish_workflow_run(
         _write_finish_run,
         run_id=run_id,
         success=success,
+        status=status,
         output_data=output_data,
         error_details=error_details,
     )
 
 
-def _write_finish_run(*, run_id, success, output_data, error_details):
+def _write_finish_run(*, run_id, success, output_data, error_details, status=None):
     now = datetime.now(timezone.utc)
     with get_db() as db:
         run = db.get(WorkflowRun, run_id)
         if run is None:
             return
-        run.status = "completed" if success else "failed"
+        run.status = status or ("completed" if success else "failed")
         run.output_data = output_data
         run.error_details = error_details
         run.finished_at = now
@@ -406,6 +408,7 @@ def finish_workflow_step(
     step_id: str,
     *,
     success: bool = True,
+    status: str | None = None,
     output_data: Any = None,
     error_details: Any = None,
 ) -> None:
@@ -413,18 +416,19 @@ def finish_workflow_step(
         _write_finish_step,
         step_id=step_id,
         success=success,
+        status=status,
         output_data=output_data,
         error_details=error_details,
     )
 
 
-def _write_finish_step(*, step_id, success, output_data, error_details):
+def _write_finish_step(*, step_id, success, output_data, error_details, status=None):
     now = datetime.now(timezone.utc)
     with get_db() as db:
         step = db.get(WorkflowStep, step_id)
         if step is None:
             return
-        step.status = "completed" if success else "failed"
+        step.status = status or ("completed" if success else "failed")
         step.output_data = output_data
         step.error_details = error_details
         step.finished_at = now
