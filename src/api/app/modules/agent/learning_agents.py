@@ -109,7 +109,7 @@ def retrieval_agent(state: LearningAgentState) -> dict:
                 "summarize_full_document",
                 user_id=state["user_id"],
                 doc_id=state["doc_id"],
-                request=state["message"],
+                request=state["query"] or state["message"],
             )
         except Exception as e:
             logger.warning("summarize_full_document failed: %s", e)
@@ -164,7 +164,7 @@ def tutor_agent(state: LearningAgentState) -> dict:
     history = _format_history(state.get("history", []))
     messages = [
         {"role": "system", "content": TUTOR_PROMPT},
-        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['message']}"},
+        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
     ]
     return {
         "answer": call_deepseek(messages, temperature=0.25),
@@ -184,7 +184,7 @@ def synthesis_agent(state: LearningAgentState) -> dict:
     history = _format_history(state.get("history", []))
     messages = [
         {"role": "system", "content": SYNTHESIS_PROMPT},
-        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['message']}"},
+        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
     ]
     return {
         "answer": call_deepseek(messages, temperature=0.2),
@@ -266,11 +266,11 @@ def _build_llm_messages(state: LearningAgentState) -> tuple[list, float]:
     if state["intent"] in ["summarize", "compare"]:
         return [
             {"role": "system", "content": SYNTHESIS_PROMPT},
-            {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['message']}"},
+            {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
         ], 0.2
     return [
         {"role": "system", "content": TUTOR_PROMPT},
-        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['message']}"},
+        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
     ], 0.25
 
 
@@ -544,7 +544,7 @@ def _source_to_dict(source) -> dict:
 
 def _sanitize_history(history) -> list[dict[str, str]]:
     cleaned = []
-    for item in history[-8:]:
+    for item in history[-20:]:
         if isinstance(item, dict):
             role = item.get("role")
             content = item.get("content")
@@ -556,7 +556,10 @@ def _sanitize_history(history) -> list[dict[str, str]]:
         content = content.strip()
         if not content:
             continue
-        cleaned.append({"role": role, "content": content[:1200]})
+        cleaned.append({"role": role, "content": content[:800]})
+    total = sum(len(m["content"]) for m in cleaned)
+    while total > 4000 and cleaned:
+        total -= len(cleaned.pop(0)["content"])
     return cleaned
 
 
