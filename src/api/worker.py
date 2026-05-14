@@ -8,9 +8,9 @@ from rq import Queue, Worker
 
 from app.core.config import REDIS_URL, RQ_QUEUE_NAME, validate_settings
 from app.core.database import init_db
-from app.services.auth_service import ensure_builtin_user
-from app.services import db_log
-from app.services.cache_service import get_redis
+from app.modules.auth.service import ensure_builtin_user
+from app.shared import db_log
+from app.shared.cache import get_redis
 
 
 logger = logging.getLogger(__name__)
