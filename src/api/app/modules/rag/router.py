@@ -3,20 +3,27 @@ import time
 from fastapi import APIRouter, Depends
 
 from app.core.database import User
-from app.shared.schemas import RagIndexRequest, RagQueryRequest, RagQueryResponse
+from app.shared.schemas import (
+    RagEnrichmentStatusResponse,
+    RagIndexRequest,
+    RagIndexResponse,
+    RagQueryRequest,
+    RagQueryResponse,
+)
 from app.shared import db_log
 from app.modules.auth.service import get_current_user
 from app.modules.rag import answer_with_rag, index_document_text
+from app.modules.rag.service import get_rag_enrichment_status
 
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
 
 
-@router.post("/index")
+@router.post("/index", response_model=RagIndexResponse)
 def index_rag_document(request: RagIndexRequest, current_user: User = Depends(get_current_user)):
     user_id_token = db_log.current_user_id.set(current_user.user_id)
     try:
-        indexed_count = index_document_text(
+        result = index_document_text(
             user_id=current_user.user_id,
             doc_id=request.doc_id,
             text=request.text,
@@ -30,11 +37,21 @@ def index_rag_document(request: RagIndexRequest, current_user: User = Depends(ge
             entity_id=request.doc_id,
             event_type="document.indexed",
             user_id=current_user.user_id,
-            after_state={"chunk_count": indexed_count, "title": request.title},
+            after_state={"chunk_count": result["indexed_count"], "title": request.title},
         )
-        return {"doc_id": request.doc_id, "indexed_count": indexed_count}
+        return RagIndexResponse(
+            doc_id=request.doc_id,
+            indexed_count=result["indexed_count"],
+            enrichment_status=result["enrichment_status"],
+        )
     finally:
         db_log.current_user_id.reset(user_id_token)
+
+
+@router.get("/index/status", response_model=RagEnrichmentStatusResponse)
+def rag_index_status(doc_id: str, current_user: User = Depends(get_current_user)):
+    data = get_rag_enrichment_status(current_user.user_id, doc_id)
+    return RagEnrichmentStatusResponse(**data)
 
 
 @router.post("/query", response_model=RagQueryResponse)

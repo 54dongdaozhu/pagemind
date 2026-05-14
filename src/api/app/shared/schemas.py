@@ -31,6 +31,20 @@ class RagIndexRequest(BaseModel):
     chunk_overlap: int = 120
 
 
+class RagIndexResponse(BaseModel):
+    doc_id: str
+    indexed_count: int
+    enrichment_status: str = "pending"  # pending | running | completed | failed
+
+
+class RagEnrichmentStatusResponse(BaseModel):
+    doc_id: str
+    status: str  # pending | running | completed | failed | unknown
+    chunk_count: int | None = None
+    error: str | None = None
+    updated_at: str | None = None
+
+
 class RagSource(BaseModel):
     chunk_index: int
     content: str

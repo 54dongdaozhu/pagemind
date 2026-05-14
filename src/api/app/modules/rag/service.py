@@ -1,12 +1,14 @@
 import re
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from app.shared.schemas import RagSource
 from app.shared.llm import call_deepseek
 from app.core.config import EMBEDDING_MODEL
 from app.shared.cache import RAG_QUERY_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
 from app.shared import db_log
+from app.shared.job_queue import enqueue_job
 from app.modules.rag.chunking import normalize_text, split_text_for_rag
 from app.modules.rag.embeddings import embed_texts
 from app.modules.rag.repository import (
@@ -20,6 +22,30 @@ from app.modules.rag.vector_store import index_chunks_in_chroma, retrieve_by_chr
 
 logger = logging.getLogger(__name__)
 _rag_enrichment_executor = ThreadPoolExecutor(max_workers=2)
+
+_RAG_ENRICHMENT_STATUS_TTL = 60 * 60 * 24 * 3  # 3 天
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _rag_enrichment_status_key(user_id: str, doc_id: str) -> str:
+    return f"rag:enrichment:user:{user_id}:doc:{doc_id}"
+
+
+def _save_enrichment_status(user_id: str, doc_id: str, status: dict) -> None:
+    try:
+        set_json(_rag_enrichment_status_key(user_id, doc_id), status, _RAG_ENRICHMENT_STATUS_TTL)
+    except Exception as e:
+        logger.warning("[RAGEnrichment] status save failed for doc=%s: %s", doc_id, e)
+
+
+def get_rag_enrichment_status(user_id: str, doc_id: str) -> dict:
+    data = get_json(_rag_enrichment_status_key(user_id, doc_id))
+    if isinstance(data, dict):
+        return data
+    return {"doc_id": doc_id, "status": "unknown", "chunk_count": None, "error": None, "updated_at": None}
 
 RAG_SYSTEM_PROMPT = """你是一个严谨的文档问答助手。请只依据给定的文档片段回答用户问题。
 
@@ -67,7 +93,7 @@ def index_document_text(
     chunks: list[str] | None = None,
     chunk_size: int = 800,
     chunk_overlap: int = 120,
-) -> int:
+) -> dict:
     canonical_chunks = _normalize_input_chunks(chunks)
     if canonical_chunks:
         normalized_text = normalize_text(text or "\n\n".join(canonical_chunks))
@@ -83,8 +109,17 @@ def index_document_text(
         summary=_quick_document_summary(normalized_text),
         title=title,
     )
-    _rag_enrichment_executor.submit(
-        _enrich_indexed_document,
+
+    _save_enrichment_status(user_id, doc_id, {
+        "doc_id": doc_id,
+        "status": "pending",
+        "chunk_count": len(canonical_chunks),
+        "error": None,
+        "updated_at": _now_iso(),
+    })
+
+    enqueued = enqueue_job(
+        _enrich_indexed_document_job,
         user_id=user_id,
         doc_id=doc_id,
         storage_doc_id=storage_doc_id,
@@ -92,13 +127,62 @@ def index_document_text(
         normalized_text=normalized_text,
         title=title,
     )
-    return len(canonical_chunks)
+    if not enqueued:
+        # RQ 不可用时降级到 ThreadPool（保持原有行为）
+        _rag_enrichment_executor.submit(
+            _enrich_indexed_document,
+            user_id=user_id,
+            doc_id=doc_id,
+            storage_doc_id=storage_doc_id,
+            chunks=canonical_chunks,
+            normalized_text=normalized_text,
+            title=title,
+        )
+
+    return {"indexed_count": len(canonical_chunks), "enrichment_status": "pending"}
 
 
 def _normalize_input_chunks(chunks: list[str] | None) -> list[str]:
     if not chunks:
         return []
     return [chunk.strip() for chunk in chunks if isinstance(chunk, str) and chunk.strip()]
+
+
+def _enrich_indexed_document_job(
+    user_id: str,
+    doc_id: str,
+    storage_doc_id: str,
+    chunks: list[str],
+    normalized_text: str,
+    title: str | None,
+) -> None:
+    """RQ Job 入口：更新状态后执行富化，异常时标记 failed 并 re-raise（触发 RQ 重试）。"""
+    _save_enrichment_status(user_id, doc_id, {
+        "doc_id": doc_id,
+        "status": "running",
+        "chunk_count": len(chunks),
+        "error": None,
+        "updated_at": _now_iso(),
+    })
+    try:
+        _enrich_indexed_document(user_id, doc_id, storage_doc_id, chunks, normalized_text, title)
+        _save_enrichment_status(user_id, doc_id, {
+            "doc_id": doc_id,
+            "status": "completed",
+            "chunk_count": len(chunks),
+            "error": None,
+            "updated_at": _now_iso(),
+        })
+        logger.info("[RAGEnrichment] completed for doc=%s chunks=%s", doc_id, len(chunks))
+    except Exception as exc:
+        _save_enrichment_status(user_id, doc_id, {
+            "doc_id": doc_id,
+            "status": "failed",
+            "chunk_count": len(chunks),
+            "error": str(exc)[:300],
+            "updated_at": _now_iso(),
+        })
+        raise  # 让 RQ 捕获并触发重试
 
 
 def _enrich_indexed_document(
@@ -109,29 +193,26 @@ def _enrich_indexed_document(
     normalized_text: str,
     title: str | None,
 ) -> None:
-    try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            summary_future = executor.submit(summarize_document, normalized_text)
-            embeddings_future = executor.submit(embed_texts, chunks)
-            summary = summary_future.result()
-            embeddings = embeddings_future.result()
-        index_chunks_in_chroma(storage_doc_id, chunks, embeddings)
-        save_indexed_document(
-            user_id=user_id,
-            doc_id=doc_id,
-            chunks=chunks,
-            embeddings=embeddings,
-            summary=summary,
-            title=title,
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        summary_future = executor.submit(summarize_document, normalized_text)
+        embeddings_future = executor.submit(embed_texts, chunks)
+        summary = summary_future.result()
+        embeddings = embeddings_future.result()
+    index_chunks_in_chroma(storage_doc_id, chunks, embeddings)
+    save_indexed_document(
+        user_id=user_id,
+        doc_id=doc_id,
+        chunks=chunks,
+        embeddings=embeddings,
+        summary=summary,
+        title=title,
+    )
+    if embeddings:
+        db_log.log_embedding_records(
+            storage_doc_id=storage_doc_id,
+            model=EMBEDDING_MODEL,
+            chunk_count=len(chunks),
         )
-        if embeddings:
-            db_log.log_embedding_records(
-                storage_doc_id=storage_doc_id,
-                model=EMBEDDING_MODEL,
-                chunk_count=len(chunks),
-            )
-    except Exception as exc:
-        logger.exception("RAG enrichment failed for doc_id=%s: %s", doc_id, exc)
 
 
 def _quick_document_summary(text: str) -> str:
