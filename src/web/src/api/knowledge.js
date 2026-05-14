@@ -45,6 +45,15 @@ export function fetchKnowledgeExtractionStatus(runId) {
 }
 
 
+export function fetchDocumentKnowledgePoints(docId) {
+  return apiFetch(`/api/doc-kps?doc_id=${encodeURIComponent(docId)}`)
+    .then(response => {
+      if (!response.ok) throw new Error(`请求失败: ${response.status}`)
+      return response.json()
+    })
+}
+
+
 export function extractDocumentKnowledge(docId, text, title) {
   return postJson('/api/extract-knowledge-document', {
     doc_id: docId,

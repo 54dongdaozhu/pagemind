@@ -3,12 +3,22 @@ function KnowledgeList({
   extracting,
   extractProgress,
   extractError,
+  refinementStatus,
   knowledgePoints,
   selectedKP,
   getKpStatus,
   onCardClick,
   onCardDoubleClick,
 }) {
+  const showRefinementStatus = docLoaded && knowledgePoints.length > 0 && !extracting
+  const refinementText = {
+    queued: '文档级整理排队中',
+    running: '文档级整理中',
+    completed: '已完成文档级整理',
+    degraded: '文档级整理已降级完成',
+    failed: '文档级整理失败，当前为初步结果',
+  }[refinementStatus]
+
   return (
     <div className="kp-list">
       {!docLoaded && <p className="placeholder">上传文档后将自动提取知识点</p>}
@@ -23,6 +33,11 @@ function KnowledgeList({
       )}
       {docLoaded && knowledgePoints.length === 0 && !extracting && !extractError && (
         <p className="placeholder">暂无提取到的知识点</p>
+      )}
+      {showRefinementStatus && refinementText && (
+        <div className={`kp-refinement-status kp-refinement-${refinementStatus}`}>
+          {refinementText}
+        </div>
       )}
       {knowledgePoints.map((kp) => {
         const status = getKpStatus(kp.text)

@@ -107,6 +107,15 @@ export function highlightKnowledgePoints(container, knowledgePoints, getStatus, 
 }
 
 
+export function clearKnowledgeHighlights(container) {
+  if (!container) return
+  container.querySelectorAll('mark.kp-highlight').forEach(mark => {
+    mark.replaceWith(document.createTextNode(mark.textContent || ''))
+  })
+  container.normalize()
+}
+
+
 export function highlightFirstMatch(container, keyword, kpId, kpType, status, importance) {
   const kp = { id: kpId, text: keyword, type: kpType, importance }
   return highlightKnowledgePoints(container, [kp], () => status, new Set()) > 0

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 
 import {
   extractKnowledge,
+  fetchDocumentKnowledgePoints,
   finalizeKnowledgeExtraction,
   startKnowledgeExtraction,
 } from '../../../api/knowledge'
@@ -10,12 +11,18 @@ import { hashString } from '../../../utils/hash'
 
 
 const EXTRACTION_CONCURRENCY = 3
+const REFINEMENT_POLL_DELAY_MS = 1200
+const REFINEMENT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'degraded'])
 
 
-function finalizeDocumentExtraction(runId, docId, batchItems) {
-  if (!runId || !docId || !batchItems.length) return
-  finalizeKnowledgeExtraction(runId, docId, batchItems).catch(err => {
-    console.warn('知识提取工作流收尾失败:', err)
+function normalizeKnowledgePoints(points, fallbackPrefix = 'kp') {
+  return (points || []).map((kp, index) => {
+    const chunkIndex = kp.chunk_index ?? kp.chunkIndex ?? index
+    return {
+      ...kp,
+      chunkIndex,
+      id: hashString(`${kp.text}${chunkIndex}`) || `${fallbackPrefix}-${index}`,
+    }
   })
 }
 
@@ -25,26 +32,78 @@ export function useKnowledgeExtraction() {
   const [extractProgress, setExtractProgress] = useState({ done: 0, total: 0 })
   const [extractError, setExtractError] = useState('')
   const [extracting, setExtracting] = useState(false)
+  const [refinementStatus, setRefinementStatus] = useState('not_started')
+  const [refinementRunId, setRefinementRunId] = useState(null)
+  const [highlightResetToken, setHighlightResetToken] = useState(0)
   const extractingRef = useRef(false)
   const extractionRunRef = useRef(0)
+  const refinementPollRef = useRef(null)
+
+  const stopRefinementPolling = useCallback(() => {
+    if (refinementPollRef.current) {
+      clearTimeout(refinementPollRef.current)
+      refinementPollRef.current = null
+    }
+  }, [])
+
+  const pollRefinedKnowledgePoints = useCallback((docId, localRunId, initialRunId = null) => {
+    if (!docId) return
+    stopRefinementPolling()
+    if (initialRunId) setRefinementRunId(initialRunId)
+
+    const poll = async () => {
+      if (extractionRunRef.current !== localRunId) return
+      try {
+        const data = await fetchDocumentKnowledgePoints(docId)
+        if (extractionRunRef.current !== localRunId) return
+
+        const nextStatus = data.refinement_status || (data.is_refined ? 'completed' : 'running')
+        setRefinementStatus(nextStatus)
+        if (data.refinement_run_id) setRefinementRunId(data.refinement_run_id)
+
+        if (data.is_refined) {
+          setKnowledgePoints(normalizeKnowledgePoints(data.knowledge_points, 'refined-kp'))
+          setHighlightResetToken(token => token + 1)
+          setRefinementStatus(nextStatus === 'not_started' ? 'completed' : nextStatus)
+          return
+        }
+
+        if (REFINEMENT_TERMINAL_STATUSES.has(nextStatus)) return
+        refinementPollRef.current = setTimeout(poll, REFINEMENT_POLL_DELAY_MS)
+      } catch (err) {
+        console.warn('文档级知识点整理状态获取失败:', err)
+        if (extractionRunRef.current === localRunId) {
+          refinementPollRef.current = setTimeout(poll, REFINEMENT_POLL_DELAY_MS * 2)
+        }
+      }
+    }
+
+    refinementPollRef.current = setTimeout(poll, REFINEMENT_POLL_DELAY_MS)
+  }, [stopRefinementPolling])
 
   const resetExtraction = useCallback(() => {
     extractionRunRef.current += 1
+    stopRefinementPolling()
     setKnowledgePoints([])
     setExtractProgress({ done: 0, total: 0 })
     setExtractError('')
     setExtracting(false)
+    setRefinementStatus('not_started')
+    setRefinementRunId(null)
     extractingRef.current = false
-  }, [])
+  }, [stopRefinementPolling])
 
   const restoreExtraction = useCallback((snapshot = {}) => {
     extractionRunRef.current += 1
+    stopRefinementPolling()
     setKnowledgePoints(snapshot.knowledgePoints || [])
     setExtractProgress(snapshot.extractProgress || { done: 0, total: 0 })
     setExtractError(snapshot.extractError || '')
     setExtracting(false)
+    setRefinementStatus(snapshot.refinementStatus || 'not_started')
+    setRefinementRunId(snapshot.refinementRunId || null)
     extractingRef.current = false
-  }, [])
+  }, [stopRefinementPolling])
 
   const extractAllChunks = useCallback(async (_html, docId = null, options = {}) => {
     if (extractingRef.current) return
@@ -55,8 +114,11 @@ export function useKnowledgeExtraction() {
     extractingRef.current = true
     const runId = extractionRunRef.current + 1
     extractionRunRef.current = runId
+    stopRefinementPolling()
     setExtracting(true)
     setExtractError('')
+    setRefinementStatus('not_started')
+    setRefinementRunId(null)
     const chunks = options.chunks || splitIntoChunks(_html)
     const canonicalChunks = chunks.map(text => String(text || '').trim()).filter(Boolean)
     setExtractProgress({ done: 0, total: canonicalChunks.length })
@@ -88,11 +150,10 @@ export function useKnowledgeExtraction() {
 
         try {
           const data = await extractKnowledge(item.text, item.chunk_id, item.doc_id, item.chunk_index, backendRunId)
-          kpsByChunk[item.chunk_index] = (data.knowledge_points || []).map(kp => ({
-            ...kp,
-            chunkIndex: item.chunk_index,
-            id: hashString(kp.text + item.chunk_index),
-          }))
+          kpsByChunk[item.chunk_index] = normalizeKnowledgePoints(
+            (data.knowledge_points || []).map(kp => ({ ...kp, chunk_index: item.chunk_index })),
+            'chunk-kp',
+          )
           if (extractionRunRef.current === runId) {
             updateKnowledgePoints()
           }
@@ -117,7 +178,21 @@ export function useKnowledgeExtraction() {
     try {
       const workerCount = Math.min(EXTRACTION_CONCURRENCY, batchItems.length)
       await Promise.all(Array.from({ length: workerCount }, extractNextChunk))
-      finalizeDocumentExtraction(backendRunId, docId, batchItems)
+      if (backendRunId && extractionRunRef.current === runId) {
+        setRefinementStatus(kpsByChunk.flat().length > 0 ? 'queued' : 'not_started')
+        try {
+          const finalized = await finalizeKnowledgeExtraction(backendRunId, docId, batchItems)
+          if (extractionRunRef.current === runId && finalized?.refinement_run_id) {
+            setRefinementStatus('running')
+            pollRefinedKnowledgePoints(docId, runId, finalized.refinement_run_id)
+          } else if (extractionRunRef.current === runId) {
+            setRefinementStatus('not_started')
+          }
+        } catch (err) {
+          console.warn('知识提取工作流收尾失败:', err)
+          if (extractionRunRef.current === runId) setRefinementStatus('failed')
+        }
+      }
       return true
     } catch (err) {
       console.error('文档知识点提取出错:', err)
@@ -135,7 +210,7 @@ export function useKnowledgeExtraction() {
         extractingRef.current = false
       }
     }
-  }, [])
+  }, [pollRefinedKnowledgePoints, stopRefinementPolling])
 
   const uniqueKPs = useMemo(() => {
     const items = []
@@ -154,6 +229,9 @@ export function useKnowledgeExtraction() {
     knowledgePoints,
     extractProgress,
     extractError,
+    refinementStatus,
+    refinementRunId,
+    highlightResetToken,
     uniqueKPs,
     extractAllChunks,
     resetExtraction,

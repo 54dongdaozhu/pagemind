@@ -1086,6 +1086,33 @@ body {
   line-height: 1.6;
 }
 
+.kp-refinement-status {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.kp-refinement-running,
+.kp-refinement-queued {
+  border-color: rgba(232, 112, 64, 0.28);
+  color: var(--accent);
+}
+
+.kp-refinement-completed {
+  color: var(--text-secondary);
+}
+
+.kp-refinement-failed,
+.kp-refinement-degraded {
+  border-color: rgba(245, 158, 11, 0.38);
+  color: #92400E;
+}
+
 /* 知识点卡片 */
 .kp-card {
   background: rgb(244, 244, 241);

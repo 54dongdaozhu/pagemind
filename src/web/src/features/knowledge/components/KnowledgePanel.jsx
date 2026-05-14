@@ -33,6 +33,8 @@ function KnowledgePanel({
   extracting,
   extractProgress,
   extractError,
+  refinementStatus,
+  refinementRunId,
   docLoaded,
   docId,
   ragReady,
@@ -115,6 +117,8 @@ function KnowledgePanel({
             extracting={extracting}
             extractProgress={extractProgress}
             extractError={extractError}
+            refinementStatus={refinementStatus}
+            refinementRunId={refinementRunId}
             knowledgePoints={knowledgePoints}
             selectedKP={selectedKP}
             getKpStatus={getKpStatus}

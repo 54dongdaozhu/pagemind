@@ -8,6 +8,7 @@ import { htmlToPlainText, splitIntoChunks } from '../features/document/documentU
 import { useDeepExplanation } from '../features/explanation/useDeepExplanation'
 import AppHeader from '../features/layout/AppHeader'
 import {
+  clearKnowledgeHighlights,
   highlightKnowledgePoints,
   updateMarkStatusInDom,
 } from '../features/knowledge/highlightDom'
@@ -68,6 +69,9 @@ function App() {
     extracting,
     extractProgress,
     extractError,
+    refinementStatus,
+    refinementRunId,
+    highlightResetToken,
     knowledgePoints,
     uniqueKPs,
     extractAllChunks,
@@ -119,6 +123,8 @@ function App() {
       knowledgePoints: [],
       extractProgress: { done: 0, total: 0 },
       extractError: '',
+      refinementStatus: 'not_started',
+      refinementRunId: null,
     })
     setRagIndexErrors(prev => {
       const next = new Map(prev)
@@ -126,23 +132,26 @@ function App() {
       return next
     })
 
-    try {
-      await indexRagDocument(docId, plainText, name, chunks)
-      setRagReadyDocIds(prev => {
-        const next = new Set(prev)
-        next.add(docId)
-        return next
+    indexRagDocument(docId, plainText, name, chunks)
+      .then(() => {
+        setRagReadyDocIds(prev => {
+          const next = new Set(prev)
+          next.add(docId)
+          return next
+        })
       })
-    } catch (err) {
-      console.error('RAG 索引失败:', err)
-      setRagIndexErrors(prev => {
-        const next = new Map(prev)
-        next.set(docId, err.name === 'AbortError' ? '问答索引超时，请稍后重新上传或检查后端日志。' : (err.message || '问答索引失败'))
-        return next
+      .catch((err) => {
+        console.error('RAG 索引失败:', err)
+        setRagIndexErrors(prev => {
+          const next = new Map(prev)
+          next.set(docId, err.name === 'AbortError' ? '问答索引超时，请稍后重新上传或检查后端日志。' : (err.message || '问答索引失败'))
+          return next
+        })
       })
-    }
 
-    await extractAllChunks(html, docId, { chunks, title: name })
+    extractAllChunks(html, docId, { chunks, title: name }).catch(err => {
+      console.error('知识点提取任务启动失败:', err)
+    })
   }, [currentUser?.user_id, extractAllChunks])
 
   const {
@@ -172,8 +181,10 @@ function App() {
       knowledgePoints,
       extractProgress,
       extractError,
+      refinementStatus,
+      refinementRunId,
     })
-  }, [activeDocId, extractError, extractProgress, knowledgePoints])
+  }, [activeDocId, extractError, extractProgress, knowledgePoints, refinementRunId, refinementStatus])
 
   const handleSelectDocument = useCallback((docId) => {
     if (docId === activeDocId) return
@@ -193,8 +204,17 @@ function App() {
       knowledgePoints: snapshot.knowledgePoints,
       extractProgress: snapshot.extractProgress,
       extractError: snapshot.extractError,
+      refinementStatus: snapshot.refinementStatus,
+      refinementRunId: snapshot.refinementRunId,
     })
   }, [activeDocId, documents, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
+
+  useEffect(() => {
+    if (!highlightResetToken || !docContentRef.current || !docLoaded) return
+    clearKnowledgeHighlights(docContentRef.current)
+    highlightedIdsRef.current = new Set()
+    setSelectedKP(null)
+  }, [docLoaded, highlightResetToken])
 
   // 增量高亮
   useEffect(() => {
@@ -393,6 +413,8 @@ function App() {
         extracting={extracting}
         extractProgress={extractProgress}
         extractError={extractError}
+        refinementStatus={refinementStatus}
+        refinementRunId={refinementRunId}
         docLoaded={docLoaded}
         docId={activeDocId}
         ragReady={Boolean(activeDocId && ragReadyDocIds.has(activeDocId))}
