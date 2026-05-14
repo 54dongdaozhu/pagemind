@@ -140,6 +140,7 @@ class KnowledgePoint(BaseModel):
     importance: Literal["high", "medium"] = "medium"
     chunk_index: int | None = None
     chunk_count: int | None = None
+    has_explanation: bool | None = None
 
 
 class ExtractResponse(BaseModel):

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 try:
     from langgraph.graph import END, StateGraph
@@ -31,6 +32,31 @@ _BROAD_TERM_BLACKLIST = frozenset({
 
 _knowledge_graph = None
 _doc_kp_graph = None
+
+
+def _has_inline_explanation(term: str, text: str) -> bool:
+    """检测 text 中是否包含对 term 的解释性表达。纯正则，无 LLM 调用。"""
+    if not term or not text:
+        return False
+    t = re.escape(term)
+    patterns = [
+        # "term是一种/是一个/是指/是..." —— 最常见的中文定义句式
+        rf'{t}\s*[，,]?\s*(?:是指|是一种|是一个|是|即|称为|定义为|表示|指的是|又称|也称)',
+        # "所谓term" / "称之为term" / "即term"
+        rf'(?:所谓|称之为|即|又称|也称)\s*{t}',
+        # "term（解释内容）" 全角括号，至少 3 字（{{3,}} 是 f-string 中的字面量 {3,}）
+        rf'{t}\s*（[^）]{{3,}}）',
+        # "term (explanation)" 半角括号
+        rf'{t}\s*\([^)]+\)',
+        # 英文：term is/refers to/means/denotes
+        rf'{t}\s+(?:is|are|refers?\s+to|means?|denotes?|represents?)\s+\S',
+        # 英文：term, which is/which refers to
+        rf'{t}\s*,\s*which\s+(?:is|are|refers?\s+to)',
+    ]
+    for pattern in patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
 
 
 # ── 通用数据处理 ───────────────────────────────────────────────────────────────
@@ -402,6 +428,7 @@ def rag_verify_agent(state: DocumentKPState) -> dict:
     """
     真正的 Agent：对每个 KP 调用 search_document_chunks 工具做 RAG 二次验证，
     丢弃在文档语义空间中完全无法检索到的可疑 KP。
+    同时利用已检索的 chunk 内容检测该术语在文档中是否有解释性表达。
     """
     from app.modules.agent.tool_registry import call_tool
 
@@ -411,8 +438,10 @@ def rag_verify_agent(state: DocumentKPState) -> dict:
 
     user_id = state["user_id"]
     doc_id = state["doc_id"]
+
     if not state.get("doc_summary"):
         logger.info("[RAGVerifyAgent] doc summary unavailable, skipping RAG verification")
+        # has_explanation 保持 None（未检测）
         return {"verified_kps": scored_kps, "stop_reason": "rag_not_ready_skip"}
 
     verified = []
@@ -426,7 +455,7 @@ def rag_verify_agent(state: DocumentKPState) -> dict:
         kp_type = kp.get("type", "term")
         chunk_count = kp.get("chunk_count", 1)
 
-        # 公式 / 短词 / 多块出现的 KP 直接通过，不走 RAG 验证
+        # 公式 / 短词 / 多块出现的 KP 直接通过，has_explanation 保持 None（不适用）
         if kp_type == "formula" or len(text) <= 2 or chunk_count > 1:
             verified.append(kp)
             continue
@@ -447,10 +476,15 @@ def rag_verify_agent(state: DocumentKPState) -> dict:
             continue
 
         if top_score >= 0.4:
+            kp = dict(kp)
+            chunk_content = sources[0].content if sources else ""
+            kp["has_explanation"] = _has_inline_explanation(text, chunk_content)
             verified.append(kp)
         elif top_score >= 0.2:
             kp = dict(kp)
             kp["importance"] = "medium"
+            chunk_content = sources[0].content if sources else ""
+            kp["has_explanation"] = _has_inline_explanation(text, chunk_content)
             verified.append(kp)
         else:
             dropped += 1
