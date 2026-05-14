@@ -384,6 +384,11 @@ def stream_learning_agents(
             yield _format_stream_metadata(state)
             return
 
+        # summarize/structure 需要全文扫描，retrieval 可能较慢；立即 yield 一条状态提示
+        # 以维持 SSE 连接存活，避免客户端/代理因空响应而超时断开
+        if state["intent"] in {"summarize", "structure"}:
+            yield "正在读取全文内容，请稍候...\n\n"
+
         _log_retrieval(state, run_id)
 
         agent_name = state.get("active_agent") or state["intent"]

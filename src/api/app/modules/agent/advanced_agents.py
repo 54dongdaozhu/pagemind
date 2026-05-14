@@ -1,11 +1,24 @@
+import logging
+
 from app.modules.agent.state import LearningAgentState
 from app.modules.agent.tool_registry import call_tool
 from app.shared import db_log
 
+logger = logging.getLogger(__name__)
+
 
 def document_structure_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
-    result = call_tool("extract_document_structure", text=context)
+    try:
+        result = call_tool("extract_document_structure", text=context)
+    except Exception as exc:
+        logger.exception("[DocumentStructureAgent] extract_document_structure failed: %s", exc)
+        return {
+            "answer": "文档结构解析暂时不可用，请稍后重试。",
+            "active_agent": "DocumentStructureAgent",
+            "tools_used": [*state["tools_used"], "extract_document_structure"],
+            "stop_reason": "tool_error",
+        }
     return {
         "answer": _format_structure_answer(result),
         "active_agent": "DocumentStructureAgent",
@@ -16,13 +29,22 @@ def document_structure_agent(state: LearningAgentState) -> dict:
 
 def practice_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
-    result = call_tool(
-        "generate_practice",
-        context=context,
-        question_count=5,
-        difficulty="medium",
-        practice_type="mixed",
-    )
+    try:
+        result = call_tool(
+            "generate_practice",
+            context=context,
+            question_count=5,
+            difficulty="medium",
+            practice_type="mixed",
+        )
+    except Exception as exc:
+        logger.exception("[PracticeAgent] generate_practice failed: %s", exc)
+        return {
+            "answer": "练习题生成暂时不可用，请稍后重试。",
+            "active_agent": "PracticeAgent",
+            "tools_used": [*state["tools_used"], "generate_practice"],
+            "stop_reason": "tool_error",
+        }
     return {
         "answer": _format_practice_answer(result),
         "active_agent": "PracticeAgent",
@@ -33,12 +55,21 @@ def practice_agent(state: LearningAgentState) -> dict:
 
 def grading_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
-    result = call_tool(
-        "grade_answer",
-        question=state["query"],
-        user_answer=state["message"],
-        reference_context=context,
-    )
+    try:
+        result = call_tool(
+            "grade_answer",
+            question=state["query"],
+            user_answer=state["message"],
+            reference_context=context,
+        )
+    except Exception as exc:
+        logger.exception("[GradingAgent] grade_answer failed: %s", exc)
+        return {
+            "answer": "答案批改暂时不可用，请稍后重试。",
+            "active_agent": "PracticeAgent",
+            "tools_used": [*state["tools_used"], "grade_answer"],
+            "stop_reason": "tool_error",
+        }
     return {
         "answer": _format_grading_answer(result),
         "active_agent": "PracticeAgent",
@@ -49,7 +80,16 @@ def grading_agent(state: LearningAgentState) -> dict:
 
 def relation_mapping_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
-    result = call_tool("map_knowledge_relations", context=context, knowledge_points=[])
+    try:
+        result = call_tool("map_knowledge_relations", context=context, knowledge_points=[])
+    except Exception as exc:
+        logger.exception("[RelationMappingAgent] map_knowledge_relations failed: %s", exc)
+        return {
+            "answer": "知识关系分析暂时不可用，请稍后重试。",
+            "active_agent": "RelationMappingAgent",
+            "tools_used": [*state["tools_used"], "map_knowledge_relations"],
+            "stop_reason": "tool_error",
+        }
     return {
         "answer": _format_relation_answer(result),
         "active_agent": "RelationMappingAgent",
@@ -60,8 +100,17 @@ def relation_mapping_agent(state: LearningAgentState) -> dict:
 
 def reflection_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
-    stats = call_tool("get_learning_stats", user_id=state["user_id"])
-    result = call_tool("schedule_review", context=context, learning_stats=stats, knowledge_status=[])
+    try:
+        stats = call_tool("get_learning_stats", user_id=state["user_id"])
+        result = call_tool("schedule_review", context=context, learning_stats=stats, knowledge_status=[])
+    except Exception as exc:
+        logger.exception("[ReflectionAgent] schedule_review failed: %s", exc)
+        return {
+            "answer": "复习计划生成暂时不可用，请稍后重试。",
+            "active_agent": "ReflectionAgent",
+            "tools_used": [*state["tools_used"], "get_learning_stats", "schedule_review"],
+            "stop_reason": "tool_error",
+        }
     db_log.log_review_records(
         user_id=state["user_id"],
         doc_id=state["doc_id"],
