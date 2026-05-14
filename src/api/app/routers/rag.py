@@ -21,6 +21,7 @@ def index_rag_document(request: RagIndexRequest, current_user: User = Depends(ge
             doc_id=request.doc_id,
             text=request.text,
             title=request.title,
+            chunks=request.chunks,
             chunk_size=request.chunk_size,
             chunk_overlap=request.chunk_overlap,
         )

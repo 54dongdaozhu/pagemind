@@ -16,6 +16,15 @@ export function extractKnowledgeBatch(chunks) {
 }
 
 
+export function extractDocumentKnowledge(docId, text, title) {
+  return postJson('/api/extract-knowledge-document', {
+    doc_id: docId,
+    text,
+    title,
+  })
+}
+
+
 export function fetchKnowledgeStatuses(kpTexts) {
   return postJson('/api/knowledge/status-batch', { kp_texts: kpTexts })
 }

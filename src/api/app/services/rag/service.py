@@ -64,16 +64,21 @@ def index_document_text(
     doc_id: str,
     text: str,
     title: str | None = None,
+    chunks: list[str] | None = None,
     chunk_size: int = 800,
     chunk_overlap: int = 120,
 ) -> int:
-    normalized_text = normalize_text(text)
-    chunks = split_text_for_rag(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    canonical_chunks = _normalize_input_chunks(chunks)
+    if canonical_chunks:
+        normalized_text = normalize_text(text or "\n\n".join(canonical_chunks))
+    else:
+        normalized_text = normalize_text(text)
+        canonical_chunks = split_text_for_rag(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     storage_doc_id = scoped_doc_id(user_id, doc_id)
     save_indexed_document(
         user_id=user_id,
         doc_id=doc_id,
-        chunks=chunks,
+        chunks=canonical_chunks,
         embeddings=None,
         summary=_quick_document_summary(normalized_text),
         title=title,
@@ -83,11 +88,17 @@ def index_document_text(
         user_id=user_id,
         doc_id=doc_id,
         storage_doc_id=storage_doc_id,
-        chunks=chunks,
+        chunks=canonical_chunks,
         normalized_text=normalized_text,
         title=title,
     )
-    return len(chunks)
+    return len(canonical_chunks)
+
+
+def _normalize_input_chunks(chunks: list[str] | None) -> list[str]:
+    if not chunks:
+        return []
+    return [chunk.strip() for chunk in chunks if isinstance(chunk, str) and chunk.strip()]
 
 
 def _enrich_indexed_document(

@@ -5,6 +5,7 @@ from app.schemas.knowledge import (
     DocKPResponse,
     ExtractBatchRequest,
     ExtractBatchResponse,
+    ExtractDocumentRequest,
     ExtractRequest,
     ExtractResponse,
     KnowledgePoint,
@@ -12,6 +13,7 @@ from app.schemas.knowledge import (
 from app.services.auth_service import get_current_user
 from app.services.extract_service import (
     extract_knowledge_batch,
+    extract_knowledge_for_document,
     extract_knowledge_from_text,
     get_refined_doc_kps,
 )
@@ -40,6 +42,21 @@ def extract_knowledge_batch_route(
     current_user: User = Depends(get_current_user),
 ):
     return extract_knowledge_batch(current_user.user_id, request.chunks)
+
+
+@router.post("/extract-knowledge-document", response_model=ExtractBatchResponse)
+def extract_knowledge_document_route(
+    request: ExtractDocumentRequest,
+    current_user: User = Depends(get_current_user),
+):
+    return extract_knowledge_for_document(
+        current_user.user_id,
+        request.doc_id,
+        text=request.text,
+        title=request.title,
+        chunk_size=request.chunk_size,
+        chunk_overlap=request.chunk_overlap,
+    )
 
 
 @router.get("/doc-kps", response_model=DocKPResponse)

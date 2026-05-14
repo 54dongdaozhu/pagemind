@@ -3,7 +3,7 @@ Knowledge extraction service.
 
 The API keeps the existing response shape used by the frontend, while the
 actual decision-making is delegated to the agent workflow:
-KnowledgeDiscoveryAgent -> KnowledgeFilterAgent -> KnowledgeRankAgent.
+KnowledgeDiscoveryAgent -> ChunkCriticAgent.
 """
 import logging
 import uuid
@@ -18,9 +18,10 @@ from app.core.config import EXTRACT_MAX_CONCURRENCY
 from app.core.database import ChunkKnowledgePoint, ExtractCache, KnowledgePoint as KnowledgePointRow, RagChunk, get_db
 from app.schemas.knowledge import ExtractBatchItem, ExtractBatchResponse, ExtractResponse, KnowledgePoint
 from app.services import db_log
-from app.services.cache_service import ANALYSIS_REPORT_CACHE_TTL_SECONDS, get_json, set_json
+from app.services.cache_service import ANALYSIS_REPORT_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
 from app.services.job_queue import enqueue_job
-from app.services.rag.repository import scoped_doc_id
+from app.services.rag.repository import list_document_chunks, scoped_doc_id
+from app.services.rag.service import index_document_text
 
 
 logger = logging.getLogger(__name__)
@@ -333,7 +334,7 @@ def extract_knowledge_from_text(
                 doc_id,
                 chunk_index,
             )
-            return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached_points)
+            return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=cached_points)
 
     cached = _load_from_cache(cache_key, text)
     if cached is not None:
@@ -347,10 +348,10 @@ def extract_knowledge_from_text(
             doc_id,
             chunk_index,
         )
-        return ExtractResponse(chunk_id=chunk_id, knowledge_points=cached)
+        return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=cached)
 
     if len(text) < 30:
-        return ExtractResponse(chunk_id=chunk_id, knowledge_points=[])
+        return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=[])
 
     try:
         with _llm_slots:
@@ -372,7 +373,7 @@ def extract_knowledge_from_text(
         save_cache=True,
     )
 
-    return ExtractResponse(chunk_id=chunk_id, knowledge_points=knowledge_points)
+    return ExtractResponse(chunk_id=chunk_id, chunk_index=chunk_index, knowledge_points=knowledge_points)
 
 
 def extract_knowledge_batch(
@@ -401,7 +402,7 @@ def extract_knowledge_batch(
     doc_id = next((c.doc_id for c in chunks if c.doc_id), None)
     if doc_id:
         all_chunk_kps = [
-            {**kp.model_dump(), "chunk_id": r.chunk_id}
+            {**kp.model_dump(), "chunk_id": r.chunk_id, "chunk_index": r.chunk_index}
             for r in results
             for kp in r.knowledge_points
         ]
@@ -414,3 +415,51 @@ def extract_knowledge_batch(
                     logger.exception("[Phase2] sync fallback failed: %s", e)
 
     return ExtractBatchResponse(results=results)
+
+
+def extract_knowledge_for_document(
+    user_id: str,
+    doc_id: str,
+    text: str | None = None,
+    title: str | None = None,
+    chunk_size: int = 800,
+    chunk_overlap: int = 120,
+) -> ExtractBatchResponse:
+    """Extract knowledge from the backend canonical document chunks.
+
+    RAG indexing owns the canonical chunking strategy. Knowledge extraction
+    reuses those persisted chunks so chunk_knowledge_points references the
+    same doc_id/chunk_index coordinate system as retrieval.
+    """
+    rows = list_document_chunks(user_id, doc_id)
+    if not rows and text and text.strip():
+        index_document_text(
+            user_id=user_id,
+            doc_id=doc_id,
+            text=text,
+            title=title,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        rows = list_document_chunks(user_id, doc_id)
+
+    canonical_chunks = [
+        ExtractBatchItem(
+            text=row["content"],
+            chunk_id=_canonical_extract_chunk_id(user_id, doc_id, row),
+            doc_id=doc_id,
+            chunk_index=row["chunk_index"],
+        )
+        for row in rows
+        if isinstance(row.get("content"), str) and row["content"].strip()
+    ]
+    return extract_knowledge_batch(user_id, canonical_chunks)
+
+
+def _canonical_extract_chunk_id(user_id: str, doc_id: str, row: dict) -> str:
+    storage_doc_id = scoped_doc_id(user_id, doc_id)
+    return stable_hash({
+        "doc_id": storage_doc_id,
+        "chunk_index": row.get("chunk_index"),
+        "content": row.get("content", ""),
+    })

@@ -4,7 +4,7 @@ import { indexRagDocument } from '../api/rag'
 import AuthScreen from '../features/auth/AuthScreen'
 import DocumentViewer from '../features/document/components/DocumentViewer'
 import { useDocumentUpload } from '../features/document/hooks/useDocumentUpload'
-import { htmlToPlainText } from '../features/document/documentUtils'
+import { htmlToPlainText, splitIntoChunks } from '../features/document/documentUtils'
 import { useDeepExplanation } from '../features/explanation/useDeepExplanation'
 import AppHeader from '../features/layout/AppHeader'
 import {
@@ -97,6 +97,7 @@ function App() {
   const handleHtmlLoaded = useCallback(async (document) => {
     const { html, name, rawText, assets } = document
     const plainText = htmlToPlainText(html)
+    const chunks = splitIntoChunks(html)
     const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${name}:${plainText}`)
     setActiveDocId(docId)
     setDocuments(prev => {
@@ -125,22 +126,23 @@ function App() {
       return next
     })
 
-    const ragIndexPromise = indexRagDocument(docId, plainText, name).then(() => {
+    try {
+      await indexRagDocument(docId, plainText, name, chunks)
       setRagReadyDocIds(prev => {
         const next = new Set(prev)
         next.add(docId)
         return next
       })
-    }).catch(err => {
+    } catch (err) {
       console.error('RAG 索引失败:', err)
       setRagIndexErrors(prev => {
         const next = new Map(prev)
         next.set(docId, err.name === 'AbortError' ? '问答索引超时，请稍后重新上传或检查后端日志。' : (err.message || '问答索引失败'))
         return next
       })
-    })
+    }
 
-    await Promise.all([extractAllChunks(html, docId), ragIndexPromise])
+    await extractAllChunks(html, docId, { chunks, title: name })
   }, [currentUser?.user_id, extractAllChunks])
 
   const {

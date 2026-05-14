@@ -26,6 +26,7 @@ class RagIndexRequest(BaseModel):
     doc_id: str
     text: str
     title: str | None = None
+    chunks: List[str] | None = None
     chunk_size: int = 800
     chunk_overlap: int = 120
 
@@ -75,6 +76,14 @@ class ExtractBatchRequest(BaseModel):
     chunks: List[ExtractBatchItem]
 
 
+class ExtractDocumentRequest(BaseModel):
+    doc_id: str
+    text: str | None = None
+    title: str | None = None
+    chunk_size: int = 800
+    chunk_overlap: int = 120
+
+
 class KnowledgePoint(BaseModel):
     text: str
     type: str
@@ -84,6 +93,7 @@ class KnowledgePoint(BaseModel):
 
 class ExtractResponse(BaseModel):
     chunk_id: str
+    chunk_index: int | None = None
     knowledge_points: List[KnowledgePoint]
 
 
