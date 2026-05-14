@@ -1,18 +1,84 @@
 import json
+import logging
+import threading
 import time
 
 import requests
 from fastapi import HTTPException
 
-from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+from app.core.config import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    FALLBACK_LLM_API_KEY,
+    FALLBACK_LLM_BASE_URL,
+    FALLBACK_LLM_MODEL,
+)
 from app.shared.cache import PROMPT_CACHE_TTL_SECONDS, get_text, set_text, stable_hash
 from app.shared import db_log
 
+logger = logging.getLogger(__name__)
 
 REQUEST_PROXIES = {"http": None, "https": None}
 
 _PROVIDER = "deepseek"
 _MODEL = "deepseek-chat"
+
+
+class _CircuitBreaker:
+    _FAILURE_THRESHOLD = 5
+    _RECOVERY_TIMEOUT = 30.0
+
+    def __init__(self):
+        self._failures = 0
+        self._opened_at: float | None = None
+        self._lock = threading.Lock()
+
+    def is_open(self) -> bool:
+        with self._lock:
+            if self._opened_at is None:
+                return False
+            if time.monotonic() - self._opened_at >= self._RECOVERY_TIMEOUT:
+                return False  # HALF_OPEN: let one probe through
+            return True
+
+    def record_success(self):
+        with self._lock:
+            self._failures = 0
+            self._opened_at = None
+
+    def record_failure(self):
+        with self._lock:
+            self._failures += 1
+            if self._failures >= self._FAILURE_THRESHOLD:
+                self._opened_at = time.monotonic()
+                logger.warning("[CircuitBreaker] LLM circuit opened after %d failures", self._failures)
+
+
+_breaker = _CircuitBreaker()
+
+
+def _http_chat_completion(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list,
+    temperature: float,
+    json_mode: bool,
+) -> tuple[str, dict]:
+    """Returns (content, usage). Raises requests.exceptions.RequestException on failure."""
+    url = f"{base_url}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    payload = {"model": model, "messages": messages, "temperature": temperature}
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    response = requests.post(url, headers=headers, json=payload, timeout=60, proxies=REQUEST_PROXIES)
+    response.raise_for_status()
+    result = response.json()
+    content = result["choices"][0]["message"]["content"]
+    return content, result.get("usage", {})
 
 
 def _stream_cached_text(text: str, chunk_size: int = 12):
@@ -32,32 +98,17 @@ def call_deepseek(
     if cached is not None:
         return cached
 
-    url = f"{DEEPSEEK_BASE_URL}/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-    }
-    payload = {
-        "model": _MODEL,
-        "messages": messages,
-        "temperature": temperature,
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
+    if _breaker.is_open():
+        raise HTTPException(status_code=503, detail="LLM 服务暂时不可用，请稍后重试。")
 
     start = time.monotonic()
     try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=60,
-            proxies=REQUEST_PROXIES,
+        content, usage = _http_chat_completion(
+            DEEPSEEK_BASE_URL, DEEPSEEK_API_KEY, _MODEL, messages, temperature, json_mode
         )
-        response.raise_for_status()
-        result = response.json()
-        usage = result.get("usage", {})
-        content = result["choices"][0]["message"]["content"]
+        if not content.strip():
+            raise HTTPException(status_code=502, detail="LLM 返回了空内容，请稍后重试。")
+        _breaker.record_success()
         db_log.log_llm_call(
             provider=_PROVIDER,
             model=_MODEL,
@@ -71,6 +122,34 @@ def call_deepseek(
         set_text(cache_key, content, PROMPT_CACHE_TTL_SECONDS)
         return content
     except requests.exceptions.RequestException as e:
+        _breaker.record_failure()
+        if FALLBACK_LLM_API_KEY and FALLBACK_LLM_BASE_URL and FALLBACK_LLM_MODEL:
+            try:
+                content, usage = _http_chat_completion(
+                    FALLBACK_LLM_BASE_URL, FALLBACK_LLM_API_KEY, FALLBACK_LLM_MODEL,
+                    messages, temperature, json_mode,
+                )
+                db_log.log_llm_call(
+                    provider="fallback",
+                    model=FALLBACK_LLM_MODEL,
+                    purpose=purpose,
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=usage.get("completion_tokens"),
+                    total_tokens=usage.get("total_tokens"),
+                    latency_ms=int((time.monotonic() - start) * 1000),
+                    success=True,
+                )
+                set_text(cache_key, content, PROMPT_CACHE_TTL_SECONDS)
+                return content
+            except requests.exceptions.RequestException as fe:
+                db_log.log_llm_call(
+                    provider="fallback",
+                    model=FALLBACK_LLM_MODEL,
+                    purpose=purpose,
+                    latency_ms=int((time.monotonic() - start) * 1000),
+                    success=False,
+                    error_details={"error": str(fe)},
+                )
         db_log.log_llm_call(
             provider=_PROVIDER,
             model=_MODEL,
@@ -79,7 +158,7 @@ def call_deepseek(
             success=False,
             error_details={"error": str(e)},
         )
-        raise HTTPException(status_code=500, detail=f"LLM 调用失败: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"LLM 调用失败: {str(e)}")
     except (KeyError, IndexError) as e:
         raise HTTPException(status_code=500, detail=f"LLM 返回格式异常: {str(e)}")
 
@@ -93,6 +172,10 @@ def call_deepseek_stream(
     cached = get_text(cache_key)
     if cached is not None:
         yield from _stream_cached_text(cached)
+        return
+
+    if _breaker.is_open():
+        yield "\n\n[错误] LLM 服务暂时不可用，请稍后重试。"
         return
 
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
@@ -145,9 +228,11 @@ def call_deepseek_stream(
                         yield content
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
+        _breaker.record_success()
     except requests.exceptions.RequestException as e:
         success = False
         error_info = {"error": str(e)}
+        _breaker.record_failure()
         yield f"\n\n[错误] LLM 调用失败: {str(e)}"
     finally:
         db_log.log_llm_call(

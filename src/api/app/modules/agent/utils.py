@@ -1,6 +1,13 @@
 import json
 
 
+def ensure_keys(data: dict, defaults: dict) -> dict:
+    for key, default in defaults.items():
+        if data.get(key) is None:
+            data[key] = default
+    return data
+
+
 def safe_parse_json(content: str) -> dict:
     content = content.strip()
     if "```" in content:

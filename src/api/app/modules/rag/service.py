@@ -367,6 +367,8 @@ def answer_with_rag(user_id: str, doc_id: str, question: str, top_k: int = 3) ->
         },
     ]
     reply = call_deepseek(messages, temperature=0.2)
+    if not reply.strip():
+        reply = "抱歉，暂时无法基于文档生成回答，请换一种提问方式。"
     return reply, sources
 
 

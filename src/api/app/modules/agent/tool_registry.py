@@ -10,7 +10,7 @@ from app.modules.agent.prompts import (
     RELATION_MAPPING_PROMPT,
     REVIEW_SCHEDULE_PROMPT,
 )
-from app.modules.agent.utils import safe_parse_json
+from app.modules.agent.utils import ensure_keys, safe_parse_json
 from app.shared import db_log
 from app.modules.explain.service import stream_deep_explanation
 from app.modules.knowledge.service import get_stats, get_status_batch, mark_known, record_click, unmark_known
@@ -73,6 +73,8 @@ def _get_learning_stats(user_id: str):
 
 def _explain_knowledge_with_context(keyword: str, kp_type: str, context: str):
     explanation = "".join(stream_deep_explanation(keyword=keyword, kp_type=kp_type, context=context))
+    if not explanation.strip():
+        explanation = f"暂无对「{keyword}」的解释，请稍后重试。"
     return {"explanation": explanation}
 
 
@@ -81,7 +83,10 @@ def _extract_document_structure(text: str):
         {"role": "system", "content": DOCUMENT_STRUCTURE_PROMPT},
         {"role": "user", "content": f"请分析以下文档内容的结构：\n\n{text}"},
     ]
-    return safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True))
+    return ensure_keys(
+        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True)),
+        {"title": "", "summary": "", "sections": [], "suggested_order": []},
+    )
 
 
 def _generate_practice(
@@ -98,7 +103,10 @@ def _generate_practice(
             f"【文档内容】\n{context}"
         )},
     ]
-    return safe_parse_json(call_deepseek(messages, temperature=0.25, json_mode=True))
+    return ensure_keys(
+        safe_parse_json(call_deepseek(messages, temperature=0.25, json_mode=True)),
+        {"items": []},
+    )
 
 
 def _grade_answer(question: str, user_answer: str, reference_context: str):
@@ -108,7 +116,10 @@ def _grade_answer(question: str, user_answer: str, reference_context: str):
             f"【题目】\n{question}\n\n【用户答案】\n{user_answer}\n\n【文档依据】\n{reference_context}"
         )},
     ]
-    return safe_parse_json(call_deepseek(messages, temperature=0.1, json_mode=True))
+    return ensure_keys(
+        safe_parse_json(call_deepseek(messages, temperature=0.1, json_mode=True)),
+        {"score": 0, "is_correct": False, "feedback": "", "missing_points": [], "review_targets": []},
+    )
 
 
 def _map_knowledge_relations(context: str, knowledge_points: list[str] | None = None):
@@ -121,7 +132,10 @@ def _map_knowledge_relations(context: str, knowledge_points: list[str] | None = 
         {"role": "system", "content": RELATION_MAPPING_PROMPT},
         {"role": "user", "content": f"【知识点列表】\n{kp_text}\n\n【文档上下文】\n{context}"},
     ]
-    return safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True))
+    return ensure_keys(
+        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True)),
+        {"relations": []},
+    )
 
 
 def _schedule_review(
@@ -137,7 +151,10 @@ def _schedule_review(
             f"【文档上下文】\n{context}"
         )},
     ]
-    return safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True))
+    return ensure_keys(
+        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True)),
+        {"review_items": [], "summary": ""},
+    )
 
 
 # ── 工具注册表 ─────────────────────────────────────────────────────────────────
