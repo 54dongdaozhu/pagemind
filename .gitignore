@@ -27,6 +27,8 @@ venv/
 backend/chroma_store/
 services/api/chroma_store/
 services/api/assets/
+src/api/chroma_store/
+src/api/assets/
 
 # Generated source bundle
 ALL_CODE.md

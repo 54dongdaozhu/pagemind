@@ -6,7 +6,7 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-# ── sys.path: 把 services/api/ 加入，使 `from app.*` 在任意 CWD 下都可用 ───────
+# ── sys.path: 把 src/api/ 加入，使 `from app.*` 在任意 CWD 下都可用 ───────
 _api_dir = str(Path(__file__).resolve().parent.parent)
 if _api_dir not in sys.path:
     sys.path.insert(0, _api_dir)

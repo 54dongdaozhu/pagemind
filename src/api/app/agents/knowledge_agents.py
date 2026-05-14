@@ -12,7 +12,6 @@ from app.agents.prompts import (
     CROSS_CHUNK_DEDUP_PROMPT,
     DOC_IMPORTANCE_PROMPT,
     KNOWLEDGE_DISCOVERY_PROMPT,
-    KNOWLEDGE_FILTER_PROMPT,
     RAG_VERIFY_PROMPT,
 )
 from app.agents.state import DocumentKPState, KnowledgeAgentState

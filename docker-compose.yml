@@ -29,7 +29,7 @@ services:
 
   api:
     build:
-      context: ./services/api
+      context: ./src/api
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,7 +61,7 @@ services:
 
   worker:
     build:
-      context: ./services/api
+      context: ./src/api
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,7 +84,7 @@ services:
 
   web:
     build:
-      context: ./services/web
+      context: ./src/web
       target: runner
     depends_on:
       api:

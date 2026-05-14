@@ -308,7 +308,7 @@ docker login ghcr.io
 
 如果 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_PATH` 还没配齐，部署 workflow 会自动跳过 SSH 部署，只保留镜像构建与发布。
 
-#### 开发模式
+#### 开发模式（推荐）
 
 直接运行 `docker compose up --build` 时，Docker Compose 会自动合并 `docker-compose.override.yml`，进入开发模式：
 
@@ -321,6 +321,31 @@ docker compose up --build
 - 接口文档：http://localhost:8000/docs
 - 后端使用 `--reload`
 - 前端使用 Vite dev server，并通过 Vite proxy 转发 `/api/*`
+- 数据库使用容器内 PostgreSQL，连接串为 `postgresql+psycopg2://pagemind:change-me@postgres:5432/pagemind`
+
+> 开发时建议默认使用这套 Compose 环境。生产环境使用 PostgreSQL，本地也用 PostgreSQL 可以提前暴露外键、事务、JSON 字段和迁移差异，避免出现“SQLite 本地正常、上线 Postgres 报错”的问题。
+
+常用命令：
+
+```bash
+# 启动完整开发环境
+docker compose up --build
+
+# 后台启动
+docker compose up -d --build
+
+# 查看 API 日志
+docker compose logs -f api
+
+# 进入 PostgreSQL
+docker compose exec postgres psql -U pagemind -d pagemind
+
+# 停止但保留数据
+docker compose down
+
+# 停止并清空数据库/Redis/Chroma 数据
+docker compose down -v
+```
 
 ### 1. 克隆/进入项目
 
@@ -328,27 +353,31 @@ docker compose up --build
 cd /path/to/ai-study-tool
 ```
 
-### 2. 配置后端
+### 2. 可选：手动运行后端
+
+如果你不想把 API 跑在容器里，也应先用 Docker Compose 启动 PostgreSQL 和 Redis：
 
 ```bash
-cd services/api
+docker compose up -d postgres redis
+```
 
-# 创建虚拟环境
+然后在本机运行后端：
+
+```bash
+cd src/api
 python3 -m venv venv
-source venv/bin/activate  # Mac/Linux
-# venv\Scripts\activate   # Windows
-
-# 安装依赖
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-在 `services/api/` 目录下创建 `.env` 文件：
+在 `src/api/.env` 中显式指向本地 PostgreSQL，不要省略 `DATABASE_URL`：
 
-```
+```env
 DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 
-DATABASE_URL=postgresql+psycopg2://pagemind:请改成强密码@localhost:5432/pagemind
+DATABASE_URL=postgresql+psycopg2://pagemind:change-me@localhost:5432/pagemind
+REDIS_URL=redis://localhost:6379/0
 
 # 可选：启用 RAG 向量检索。未配置时自动回退关键词检索
 EMBEDDING_API_KEY=你的_Embedding_API_Key
@@ -364,12 +393,12 @@ uvicorn main:app --reload --port 8000
 
 后端运行在 http://localhost:8000
 
-### 3. 配置前端
+### 3. 可选：手动运行前端
 
 打开新终端：
 
 ```bash
-cd services/web
+cd src/web
 npm install
 npm run dev
 ```
@@ -486,14 +515,8 @@ known(已掌握)
 ### 启动开发环境
 
 ```bash
-# 终端 1: 后端
-cd services/api
-source venv/bin/activate
-uvicorn main:app --reload --port 8000
-
-# 终端 2: 前端
-cd services/web
-npm run dev
+# 推荐：完整容器开发环境，默认使用 PostgreSQL
+docker compose up --build
 ```
 
 ### 重置掌握数据
