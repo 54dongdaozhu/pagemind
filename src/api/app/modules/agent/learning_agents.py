@@ -51,8 +51,6 @@ def supervisor_agent(message: str, doc_id: str | None, history: list[dict[str, s
         }
 
     heuristic = _heuristic_supervisor(message)
-    if heuristic["intent"] != "qa":
-        return heuristic
 
     user_content = _format_supervisor_input(message, history or [])
     messages = [
@@ -60,7 +58,7 @@ def supervisor_agent(message: str, doc_id: str | None, history: list[dict[str, s
         {"role": "user", "content": user_content},
     ]
     try:
-        raw_reply = call_deepseek(messages, temperature=0.1, json_mode=True)
+        raw_reply = call_deepseek(messages, temperature=0.1, json_mode=True, purpose="supervisor")
         parsed = safe_parse_json(raw_reply)
         intent = parsed.get("intent", "qa")
         if intent not in [
@@ -167,7 +165,7 @@ def tutor_agent(state: LearningAgentState) -> dict:
         {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
     ]
     return {
-        "answer": call_deepseek(messages, temperature=0.25),
+        "answer": call_deepseek(messages, temperature=0.25, purpose="tutor"),
         "active_agent": "TutorAgent",
         "stop_reason": "answered",
     }
@@ -187,7 +185,7 @@ def synthesis_agent(state: LearningAgentState) -> dict:
         {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
     ]
     return {
-        "answer": call_deepseek(messages, temperature=0.2),
+        "answer": call_deepseek(messages, temperature=0.2, purpose="synthesis"),
         "active_agent": "SynthesisAgent",
         "stop_reason": "answered",
     }
@@ -371,6 +369,7 @@ def stream_learning_agents(
             for chunk in call_deepseek_stream(
                 [{"role": "system", "content": FALLBACK_PROMPT}, {"role": "user", "content": message}],
                 temperature=0.3,
+                purpose="fallback",
             ):
                 answer_parts.append(chunk)
                 yield chunk
@@ -415,8 +414,9 @@ def stream_learning_agents(
                     yield answer
                 else:
                     messages, temp = _build_llm_messages(state)
+                    _purpose = "synthesis" if state["intent"] in ["summarize", "compare"] else "tutor"
                     answer_parts = []
-                    for chunk in call_deepseek_stream(messages, temperature=temp):
+                    for chunk in call_deepseek_stream(messages, temperature=temp, purpose=_purpose):
                         answer_parts.append(chunk)
                         yield chunk
                     state.update({
@@ -585,6 +585,7 @@ def _fallback_answer(message: str) -> str:
     return call_deepseek(
         [{"role": "system", "content": FALLBACK_PROMPT}, {"role": "user", "content": message}],
         temperature=0.3,
+        purpose="fallback",
     )
 
 

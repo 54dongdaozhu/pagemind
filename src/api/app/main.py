@@ -14,6 +14,7 @@ from app.modules.explain import router as explain_router
 from app.modules.extraction import router as extraction_router
 from app.modules.health import router as health_router
 from app.modules.knowledge import router as knowledge_router
+from app.modules.observability import router as obs_router
 from app.modules.rag import router as rag_router
 
 
@@ -69,6 +70,7 @@ def create_app():
     _fast_api.include_router(explain_router.router, dependencies=protected)
     _fast_api.include_router(knowledge_router.router, dependencies=protected)
     _fast_api.include_router(rag_router.router, dependencies=protected)
+    _fast_api.include_router(obs_router.router, dependencies=protected)
     return _ConcurrencyLimitMiddleware(_fast_api, limit=5)
 
 

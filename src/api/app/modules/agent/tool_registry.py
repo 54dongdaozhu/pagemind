@@ -84,7 +84,7 @@ def _extract_document_structure(text: str):
         {"role": "user", "content": f"请分析以下文档内容的结构：\n\n{text}"},
     ]
     return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True)),
+        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True, purpose="tool.structure")),
         {"title": "", "summary": "", "sections": [], "suggested_order": []},
     )
 
@@ -104,7 +104,7 @@ def _generate_practice(
         )},
     ]
     return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.25, json_mode=True)),
+        safe_parse_json(call_deepseek(messages, temperature=0.25, json_mode=True, purpose="tool.practice")),
         {"items": []},
     )
 
@@ -117,7 +117,7 @@ def _grade_answer(question: str, user_answer: str, reference_context: str):
         )},
     ]
     return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.1, json_mode=True)),
+        safe_parse_json(call_deepseek(messages, temperature=0.1, json_mode=True, purpose="tool.grade")),
         {"score": 0, "is_correct": False, "feedback": "", "missing_points": [], "review_targets": []},
     )
 
@@ -133,7 +133,7 @@ def _map_knowledge_relations(context: str, knowledge_points: list[str] | None = 
         {"role": "user", "content": f"【知识点列表】\n{kp_text}\n\n【文档上下文】\n{context}"},
     ]
     return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True)),
+        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True, purpose="tool.relation")),
         {"relations": []},
     )
 
@@ -152,7 +152,7 @@ def _schedule_review(
         )},
     ]
     return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True)),
+        safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True, purpose="tool.review")),
         {"review_items": [], "summary": ""},
     )
 

@@ -265,7 +265,7 @@ def summarize_document(text: str) -> str:
         {"role": "user", "content": f"请总结以下文档：\n\n{summary_input}"},
     ]
     try:
-        return call_deepseek(messages, temperature=0.2).strip()
+        return call_deepseek(messages, temperature=0.2, purpose="rag.summarize").strip()
     except Exception:
         return summary_input[:500]
 
@@ -366,7 +366,7 @@ def answer_with_rag(user_id: str, doc_id: str, question: str, top_k: int = 3) ->
             "content": f"【文档摘要】\n{summary or '无'}\n\n【检索片段】\n{context}\n\n【用户问题】\n{question}",
         },
     ]
-    reply = call_deepseek(messages, temperature=0.2)
+    reply = call_deepseek(messages, temperature=0.2, purpose="rag.qa")
     if not reply.strip():
         reply = "抱歉，暂时无法基于文档生成回答，请换一种提问方式。"
     return reply, sources
@@ -407,7 +407,7 @@ def _summarize_chunk_batch(batch, batch_index: int, batch_count: int) -> str:
             ),
         },
     ]
-    return call_deepseek(messages, temperature=0.15).strip()
+    return call_deepseek(messages, temperature=0.15, purpose="rag.chunk_summarize").strip()
 
 
 def _merge_partial_summaries(partials: list[str], request: str = "") -> str:
@@ -423,7 +423,7 @@ def _merge_partial_summaries(partials: list[str], request: str = "") -> str:
             "content": f"【用户请求】\n{request or '请总结全文'}\n\n【分批整理结果】\n{partial_text}",
         },
     ]
-    return call_deepseek(messages, temperature=0.15).strip()
+    return call_deepseek(messages, temperature=0.15, purpose="rag.merge_summary").strip()
 
 
 def _retrieve_by_keyword(rows, question: str, top_k: int) -> list[RagSource]:

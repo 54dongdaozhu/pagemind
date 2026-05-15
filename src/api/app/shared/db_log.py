@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy import delete
 
+from app.core.config import DEEPSEEK_INPUT_PRICE_PER_M, DEEPSEEK_OUTPUT_PRICE_PER_M
 from app.core.database import (
     EmbeddingRecord,
     EventLog,
@@ -162,10 +163,19 @@ def log_llm_call(
     )
 
 
+def _calc_cost_usd(provider: str, prompt_tokens: int | None, completion_tokens: int | None) -> float | None:
+    if prompt_tokens and completion_tokens:
+        return (prompt_tokens * DEEPSEEK_INPUT_PRICE_PER_M
+                + completion_tokens * DEEPSEEK_OUTPUT_PRICE_PER_M) / 1_000_000
+    return None
+
+
 def _write_llm_call(
     *, provider, model, purpose, prompt_tokens, completion_tokens, total_tokens,
     cost_usd, latency_ms, success, error_details, user_id, run_id, step_id, qa_id,
 ):
+    if cost_usd is None:
+        cost_usd = _calc_cost_usd(provider, prompt_tokens, completion_tokens)
     with get_db() as db:
         db.add(LLMCallLog(
             call_id=uuid.uuid4().hex,
