@@ -1,7 +1,7 @@
 import re
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 
 from app.shared.schemas import RagSource
@@ -310,21 +310,36 @@ def summarize_full_document(user_id: str, doc_id: str, request: str = "") -> dic
     try:
         deadline = time.monotonic() + _FULL_SUMMARY_TIMEOUT_SECONDS
         batches = _batch_chunk_rows(rows)
-        partials = []
-        for idx, batch in enumerate(batches, start=1):
-            remaining = deadline - time.monotonic()
-            if remaining <= 62:  # 不足以完成一个完整批次（LLM timeout=60s），停止
-                logger.warning(
-                    "[FullSummary] deadline reached after %s/%s batches for doc=%s",
-                    idx - 1, len(batches), doc_id,
-                )
-                break
-            partials.append(_summarize_chunk_batch(batch=batch, batch_index=idx, batch_count=len(batches)))
+        partials: list[str | None] = [None] * len(batches)
 
-        if not partials:
+        executor = ThreadPoolExecutor(max_workers=4)
+        future_to_idx = {
+            executor.submit(
+                _summarize_chunk_batch,
+                batch=b,
+                batch_index=i,
+                batch_count=len(batches),
+            ): i - 1
+            for i, b in enumerate(batches, 1)
+        }
+        remaining = max(1.0, deadline - time.monotonic())
+        try:
+            for fut in as_completed(future_to_idx, timeout=remaining):
+                partials[future_to_idx[fut]] = fut.result()
+        except FuturesTimeoutError:
+            done = sum(1 for p in partials if p is not None)
+            logger.warning(
+                "[FullSummary] deadline reached: %d/%d batches completed for doc=%s",
+                done, len(batches), doc_id,
+            )
+        finally:
+            executor.shutdown(wait=False)
+
+        completed = [p for p in partials if p is not None]
+        if not completed:
             raise RuntimeError("全文总结超时：未能完成任何批次")
 
-        merged = _merge_partial_summaries(partials, request=request)
+        merged = _merge_partial_summaries(completed, request=request)
         result = {"summary": merged, "chunk_count": len(rows), "batch_count": len(batches)}
         set_json(cache_key, result, _FULL_SUMMARY_RESULT_TTL)
         _save_full_summary_status(user_id, doc_id, {

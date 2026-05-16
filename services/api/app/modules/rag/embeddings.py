@@ -9,6 +9,8 @@ from app.shared.llm import REQUEST_PROXIES
 
 logger = logging.getLogger(__name__)
 
+_EMBED_BATCH_SIZE = 100
+
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:
     if not EMBEDDING_API_KEY:
@@ -37,46 +39,41 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {EMBEDDING_API_KEY}",
     }
-    payload = {
-        "model": EMBEDDING_MODEL,
-        "input": missing_texts,
-    }
 
     try:
-        logger.info(
-            "Requesting embeddings: url=%s model=%s input_count=%s",
-            url,
-            EMBEDDING_MODEL,
-            len(missing_texts),
-        )
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=60,
-            proxies=REQUEST_PROXIES,
-        )
-        if not response.ok:
-            logger.error(
-                "Embedding request failed: status=%s body=%s",
-                response.status_code,
-                response.text[:1000],
+        all_new_embeddings: list[list[float]] = []
+        for batch_start in range(0, len(missing_texts), _EMBED_BATCH_SIZE):
+            batch = missing_texts[batch_start:batch_start + _EMBED_BATCH_SIZE]
+            logger.info(
+                "Requesting embeddings: url=%s model=%s batch=%d-%d total=%d",
+                url, EMBEDDING_MODEL,
+                batch_start, batch_start + len(batch) - 1, len(missing_texts),
             )
-        response.raise_for_status()
-        data = response.json()
-        items = data.get("data", [])
-        ordered = sorted(items, key=lambda item: item.get("index", 0))
-        embeddings = [item["embedding"] for item in ordered]
+            response = requests.post(
+                url,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {EMBEDDING_API_KEY}"},
+                json={"model": EMBEDDING_MODEL, "input": batch},
+                timeout=60,
+                proxies=REQUEST_PROXIES,
+            )
+            if not response.ok:
+                logger.error(
+                    "Embedding request failed: status=%s body=%s",
+                    response.status_code, response.text[:1000],
+                )
+            response.raise_for_status()
+            items = sorted(response.json().get("data", []), key=lambda x: x.get("index", 0))
+            all_new_embeddings.extend(item["embedding"] for item in items)
+
         embeddings_to_cache = {}
-        for original_idx, embedding in zip(missing_indexes, embeddings):
+        for original_idx, embedding in zip(missing_indexes, all_new_embeddings):
             cached_embeddings[original_idx] = embedding
             embeddings_to_cache[keys[original_idx]] = embedding
         set_json_many(embeddings_to_cache, EMBEDDING_CACHE_TTL_SECONDS)
         logger.info(
-            "Embedding request succeeded: input_count=%s embedding_count=%s dimension=%s",
+            "Embedding succeeded: total=%d dimension=%s",
             len(missing_texts),
-            len(cached_embeddings),
-            len(cached_embeddings[0]) if cached_embeddings else 0,
+            len(all_new_embeddings[0]) if all_new_embeddings else 0,
         )
         return cached_embeddings
     except Exception as exc:

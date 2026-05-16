@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 REQUEST_PROXIES = {"http": None, "https": None}
 
+_http_session = requests.Session()
+
 _PROVIDER = "deepseek"
 _MODEL = "deepseek-chat"
 
@@ -74,7 +76,7 @@ def _http_chat_completion(
     payload = {"model": model, "messages": messages, "temperature": temperature}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    response = requests.post(url, headers=headers, json=payload, timeout=60, proxies=REQUEST_PROXIES)
+    response = _http_session.post(url, headers=headers, json=payload, timeout=60, proxies=REQUEST_PROXIES)
     response.raise_for_status()
     result = response.json()
     content = result["choices"][0]["message"]["content"]
@@ -201,7 +203,7 @@ def call_deepseek_stream(
     error_info = None
     answer_parts = []
     try:
-        with requests.post(
+        with _http_session.post(
             url,
             headers=headers,
             json=payload,
