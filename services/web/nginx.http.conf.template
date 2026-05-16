@@ -1,33 +1,14 @@
-# HTTP：仅处理 ACME challenge，其余 301 跳转 HTTPS
 server {
-    listen 80;
-    server_name ${DOMAIN};
-    server_tokens off;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-# HTTPS
-server {
-    listen 443 ssl;
-    server_name ${DOMAIN};
+    listen 80 default_server;
+    server_name _;
     server_tokens off;
     root /usr/share/nginx/html;
     index index.html;
     client_max_body_size 20m;
 
-    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 1d;
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
     gzip on;
     gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
@@ -35,7 +16,6 @@ server {
     add_header X-Content-Type-Options nosniff;
     add_header X-Frame-Options SAMEORIGIN;
     add_header Referrer-Policy strict-origin-when-cross-origin;
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
 
     location /api/ {
         proxy_pass http://api:8000;
@@ -44,7 +24,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # Required for SSE streaming (explain-deep endpoint)
         gzip off;
         proxy_buffering off;
         proxy_cache off;
@@ -58,7 +37,6 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    # SPA fallback — all other paths serve index.html
     location / {
         try_files $uri $uri/ /index.html;
     }

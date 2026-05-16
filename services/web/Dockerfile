@@ -18,6 +18,9 @@ RUN npm run build
 # ── stage 4: nginx static server ──────────────────────────────────────────────
 FROM nginx:alpine AS runner
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.http.conf.template /etc/nginx/templates/http.conf.template
+COPY nginx.https.conf.template /etc/nginx/templates/https.conf.template
+COPY docker-entrypoint-web.sh /usr/local/bin/docker-entrypoint-web.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-web.sh
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["docker-entrypoint-web.sh"]
