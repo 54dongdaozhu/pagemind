@@ -93,10 +93,15 @@ export function highlightKnowledgePoints(container, knowledgePoints, getStatus, 
     textNodes.push(textNode)
   }
 
+  container.style.visibility = 'hidden'
   let markedCount = 0
-  for (const node of textNodes) {
-    if (pendingItems.size === 0) break
-    markedCount += markTextNode(node, pendingItems, getStatus, highlightedIds)
+  try {
+    for (const node of textNodes) {
+      if (pendingItems.size === 0) break
+      markedCount += markTextNode(node, pendingItems, getStatus, highlightedIds)
+    }
+  } finally {
+    container.style.visibility = ''
   }
 
   for (const kpId of pendingItems.keys()) {

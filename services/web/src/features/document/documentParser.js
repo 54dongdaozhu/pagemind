@@ -131,18 +131,17 @@ async function parsePdf(file) {
 
   const arrayBuffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-  const pages = []
 
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-    const page = await pdf.getPage(pageNumber)
-    const content = await page.getTextContent()
-    const text = content.items
-      .map(item => item.str)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (text) pages.push(`<section class="pdf-page"><h2>第 ${pageNumber} 页</h2>${paragraphsToHtml(text)}</section>`)
-  }
+  const pageResults = await Promise.all(
+    Array.from({ length: pdf.numPages }, async (_, i) => {
+      const pageNumber = i + 1
+      const page = await pdf.getPage(pageNumber)
+      const content = await page.getTextContent()
+      const text = content.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim()
+      return text ? `<section class="pdf-page"><h2>第 ${pageNumber} 页</h2>${paragraphsToHtml(text)}</section>` : null
+    })
+  )
+  const pages = pageResults.filter(Boolean)
 
   if (pages.length === 0) {
     throw new Error('PDF 未提取到可阅读文本，扫描版 PDF 请先 OCR 后再上传')
