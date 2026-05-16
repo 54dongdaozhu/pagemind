@@ -442,9 +442,14 @@ def _merge_partial_summaries(partials: list[str], request: str = "") -> str:
 
 
 def _retrieve_by_keyword(rows, question: str, top_k: int) -> list[RagSource]:
+    question_lower = question.strip().lower()
+    if not question_lower:
+        return []
+    terms = _extract_terms(question_lower)
+
     scored = []
     for row in rows:
-        score = _score_chunk(question, row["content"])
+        score = _score_chunk(question_lower, row["content"], terms)
         if score > 0:
             scored.append(
                 RagSource(
@@ -459,17 +464,17 @@ def _retrieve_by_keyword(rows, question: str, top_k: int) -> list[RagSource]:
     return scored[:top_k]
 
 
-def _score_chunk(question: str, content: str) -> float:
-    question = question.strip().lower()
+def _score_chunk(question: str, content: str, terms: list[str] | None = None) -> float:
     content_lower = content.lower()
     if not question:
-        return 0
+        return 0.0
 
     score = 0.0
     if question in content_lower:
         score += 10.0
 
-    terms = _extract_terms(question)
+    if terms is None:
+        terms = _extract_terms(question)
     for term in terms:
         count = content_lower.count(term)
         if count:

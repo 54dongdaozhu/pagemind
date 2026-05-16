@@ -18,23 +18,28 @@ export function clearAuthToken() {
 
 
 export async function apiFetch(path, options = {}) {
+  const { timeout = 30000, signal: externalSignal, ...fetchOptions } = options
   const token = getAuthToken()
-  const headers = {
-    ...(options.headers || {}),
-  }
+  const headers = { ...(fetchOptions.headers || {}) }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  })
-
-  if (response.status === 401) {
-    clearAuthToken()
-    window.dispatchEvent(new CustomEvent('auth:expired'))
+  let controller, timer, signal = externalSignal
+  if (timeout !== null && !externalSignal) {
+    controller = new AbortController()
+    timer = setTimeout(() => controller.abort(), timeout)
+    signal = controller.signal
   }
 
-  return response
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers, signal })
+    if (response.status === 401) {
+      clearAuthToken()
+      window.dispatchEvent(new CustomEvent('auth:expired'))
+    }
+    return response
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 

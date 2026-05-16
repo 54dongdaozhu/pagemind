@@ -85,14 +85,22 @@ function getFilePath(file) {
   return normalizePath(file.webkitRelativePath || file.relativePath || file.name)
 }
 
+const UPLOAD_CONCURRENCY = 5
+
 async function createAssetMap(files) {
   const assets = new Map()
-  await Promise.all(files.map(async file => {
-    const path = getFilePath(file)
-    if (!path || !isImageFileName(path)) return
-    const asset = await uploadImageAsset(file, path)
-    assets.set(path, asset.url)
-  }))
+  const imageFiles = files.filter(f => isImageFileName(getFilePath(f)))
+  if (imageFiles.length === 0) return assets
+  let idx = 0
+  const worker = async () => {
+    while (idx < imageFiles.length) {
+      const file = imageFiles[idx++]
+      const path = getFilePath(file)
+      const asset = await uploadImageAsset(file, path)
+      assets.set(path, asset.url)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, imageFiles.length) }, worker))
   return assets
 }
 
