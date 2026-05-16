@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     from langgraph.graph import END, StateGraph
@@ -32,6 +33,7 @@ _BROAD_TERM_BLACKLIST = frozenset({
 
 _knowledge_graph = None
 _doc_kp_graph = None
+_RAG_VERIFY_MAX_WORKERS = 8
 
 
 def _has_inline_explanation(term: str, text: str) -> bool:
@@ -424,14 +426,46 @@ def document_importance_agent(state: DocumentKPState) -> dict:
         return {"doc_summary": doc_summary, "scored_kps": deduped_kps, "stop_reason": "scored_fallback"}
 
 
-def rag_verify_agent(state: DocumentKPState) -> dict:
-    """
-    真正的 Agent：对每个 KP 调用 search_document_chunks 工具做 RAG 二次验证，
-    丢弃在文档语义空间中完全无法检索到的可疑 KP。
-    同时利用已检索的 chunk 内容检测该术语在文档中是否有解释性表达。
-    """
+def _verify_single_kp(kp: dict, user_id: str, doc_id: str) -> dict | None:
+    """对单个 term KP 做 RAG 检索验证。返回处理后的 kp，或 None 表示丢弃。"""
     from app.modules.agent.tool_registry import call_tool
 
+    text = kp.get("text", "")
+    try:
+        sources = call_tool(
+            "search_document_chunks",
+            user_id=user_id,
+            doc_id=doc_id,
+            query=text,
+            top_k=1,
+        )
+    except Exception as e:
+        logger.warning("[RAGVerifyAgent] search failed for '%s': %s", text, e)
+        return dict(kp)
+
+    top_score = sources[0].score if sources else 0.0
+    chunk_content = sources[0].content if sources else ""
+
+    if top_score >= 0.4:
+        result = dict(kp)
+        result["has_explanation"] = _has_inline_explanation(text, chunk_content)
+        return result
+    elif top_score >= 0.2:
+        result = dict(kp)
+        result["importance"] = "medium"
+        result["has_explanation"] = _has_inline_explanation(text, chunk_content)
+        return result
+    else:
+        logger.info("[RAGVerifyAgent] dropped '%s' (score=%.3f)", text, top_score)
+        return None
+
+
+def rag_verify_agent(state: DocumentKPState) -> dict:
+    """
+    对每个 KP 调用 search_document_chunks 工具做 RAG 二次验证，
+    丢弃在文档语义空间中完全无法检索到的可疑 KP。
+    term 类 KP 使用 ThreadPoolExecutor 并发检索，公式/短词/多块 KP 快速通过。
+    """
     scored_kps = state["scored_kps"]
     if not scored_kps:
         return {"verified_kps": [], "stop_reason": "no_kps"}
@@ -441,55 +475,35 @@ def rag_verify_agent(state: DocumentKPState) -> dict:
 
     if not state.get("doc_summary"):
         logger.info("[RAGVerifyAgent] doc summary unavailable, skipping RAG verification")
-        # has_explanation 保持 None（未检测）
         return {"verified_kps": scored_kps, "stop_reason": "rag_not_ready_skip"}
 
-    verified = []
-    dropped = 0
+    fast_track = []
+    needs_verify = []
 
     for kp in scored_kps:
         if not isinstance(kp, dict) or not kp.get("text"):
             continue
-
-        text = kp["text"]
         kp_type = kp.get("type", "term")
         chunk_count = kp.get("chunk_count", 1)
-
         # 公式 / 短词 / 多块出现的 KP 直接通过，has_explanation 保持 None（不适用）
-        if kp_type == "formula" or len(text) <= 2 or chunk_count > 1:
-            verified.append(kp)
-            continue
-
-        # 调用 RAG 工具检索
-        try:
-            sources = call_tool(
-                "search_document_chunks",
-                user_id=user_id,
-                doc_id=doc_id,
-                query=text,
-                top_k=1,
-            )
-            top_score = sources[0].score if sources else 0.0
-        except Exception as e:
-            logger.warning("[RAGVerifyAgent] search failed for '%s': %s", text, e)
-            verified.append(kp)
-            continue
-
-        if top_score >= 0.4:
-            kp = dict(kp)
-            chunk_content = sources[0].content if sources else ""
-            kp["has_explanation"] = _has_inline_explanation(text, chunk_content)
-            verified.append(kp)
-        elif top_score >= 0.2:
-            kp = dict(kp)
-            kp["importance"] = "medium"
-            chunk_content = sources[0].content if sources else ""
-            kp["has_explanation"] = _has_inline_explanation(text, chunk_content)
-            verified.append(kp)
+        if kp_type == "formula" or len(kp["text"]) <= 2 or chunk_count > 1:
+            fast_track.append(kp)
         else:
-            dropped += 1
-            logger.info("[RAGVerifyAgent] dropped '%s' (score=%.3f)", text, top_score)
+            needs_verify.append(kp)
 
+    verified_from_rag: list[dict] = []
+    with ThreadPoolExecutor(max_workers=_RAG_VERIFY_MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_verify_single_kp, kp, user_id, doc_id): kp
+            for kp in needs_verify
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                verified_from_rag.append(result)
+
+    dropped = len(needs_verify) - len(verified_from_rag)
+    verified = fast_track + verified_from_rag
     logger.info("[RAGVerifyAgent] kept=%s dropped=%s", len(verified), dropped)
     verified.sort(key=lambda k: (0 if k.get("importance") == "high" else 1, k.get("text", "")))
     return {"verified_kps": verified, "stop_reason": "verified"}
