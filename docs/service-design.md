@@ -6,9 +6,9 @@
 
 | 服务 | 目录/镜像 | 职责 | 依赖 |
 | --- | --- | --- | --- |
-| `web` | `src/web` | React/Vite 前端；生产环境由 nginx 托管静态文件，并代理 `/api/*` 到 `api` | `api` |
-| `api` | `src/api` | FastAPI HTTP API、认证、RAG、知识点提取入口、学习状态接口 | `postgres`, `redis` |
-| `worker` | `src/api` | RQ 异步任务进程，复用 API 业务代码，处理提取结果持久化等后台任务 | `postgres`, `redis` |
+| `web` | `services/web` | React/Vite 前端；生产环境由 nginx 托管静态文件，并代理 `/api/*` 到 `api` | `api` |
+| `api` | `services/api` | FastAPI HTTP API、认证、RAG、知识点提取入口、学习状态接口 | `postgres`, `redis` |
+| `worker` | `services/api` | RQ 异步任务进程，复用 API 业务代码，处理提取结果持久化等后台任务 | `postgres`, `redis` |
 | `postgres` | `postgres:16-alpine` | 关系型持久化：用户、文档、知识点、学习状态、工作流记录 | 无应用依赖 |
 | `redis` | `redis:7-alpine` | RQ 队列和短期任务协调 | 无应用依赖 |
 
@@ -16,7 +16,7 @@
 
 ```text
 ai-study-tool/
-├── src/
+├── services/
 │   ├── api/              # FastAPI + worker 共用 Python 代码
 │   └── web/              # React + Vite + nginx 前端
 ├── docs/                 # 架构与服务设计文档
@@ -40,4 +40,4 @@ ai-study-tool/
 - `DATABASE_URL` 默认指向 `postgres:5432`。
 - `REDIS_URL` 默认指向 `redis:6379/0`。
 - `RQ_QUEUE_NAME` 默认使用 `pagemind`。
-- 开发模式通过 `docker-compose.override.yml` 挂载 `src/api` 与 `src/web`，分别启用 FastAPI reload 和 Vite dev server。
+- 开发模式通过 `docker-compose.override.yml` 挂载 `services/api` 与 `services/web`，分别启用 FastAPI reload 和 Vite dev server。

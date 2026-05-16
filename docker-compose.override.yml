@@ -11,13 +11,13 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./src/api:/app
+      - ./services/api:/app
       - api-data:/data
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   worker:
     volumes:
-      - ./src/api:/app
+      - ./services/api:/app
       - api-data:/data
     command: python worker.py
 
@@ -30,7 +30,7 @@ services:
       CHOKIDAR_USEPOLLING: "true"
       VITE_API_PROXY_TARGET: http://api:8000
     volumes:
-      - ./src/web:/app
+      - ./services/web:/app
       - frontend-node-modules:/app/node_modules
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ >/dev/null"]

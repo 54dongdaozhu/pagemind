@@ -364,13 +364,13 @@ docker compose up -d postgres redis
 然后在本机运行后端：
 
 ```bash
-cd src/api
+cd services/api
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-在 `src/api/.env` 中显式指向本地 PostgreSQL，不要省略 `DATABASE_URL`：
+在 `services/api/.env` 中显式指向本地 PostgreSQL，不要省略 `DATABASE_URL`：
 
 ```env
 DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
@@ -398,7 +398,7 @@ uvicorn main:app --reload --port 8000
 打开新终端：
 
 ```bash
-cd src/web
+cd services/web
 npm install
 npm run dev
 ```
