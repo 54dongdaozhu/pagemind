@@ -68,7 +68,7 @@ class Chunk(Base):
 
     doc_id = Column(Text, ForeignKey("documents.doc_id"), primary_key=True)
     chunk_index = Column(Integer, primary_key=True)
-    version_id = Column(Text, ForeignKey("document_versions.version_id"))
+    version_id = Column(Text, ForeignKey("document_versions.version_id"), index=True)
     content = Column(Text, nullable=False)
     # JSON 类型：SQLAlchemy 在 PostgreSQL 上映射为 JSON，在 SQLite 上映射为 TEXT
     # 旧数据库中该列为 TEXT，JSON 类型会自动 json.loads，兼容无缝
@@ -156,7 +156,7 @@ class StudyStatusHistory(Base):
     history_id = Column(String(32), primary_key=True)
     record_id = Column(Text, ForeignKey("study_records.record_id"), nullable=False, index=True)
     user_id = Column(String(64), ForeignKey("users.user_id"), nullable=False, index=True)
-    kp_id = Column(String(32), ForeignKey("knowledge_points.kp_id"))
+    kp_id = Column(String(32), ForeignKey("knowledge_points.kp_id"), index=True)
     kp_text = Column(Text, nullable=False)
     old_status = Column(String(32))
     new_status = Column(String(32), nullable=False)
@@ -172,7 +172,7 @@ class ReviewRecord(Base):
     review_id = Column(Text, primary_key=True)
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
     doc_id = Column(Text, ForeignKey("documents.doc_id"), index=True)
-    kp_id = Column(String(32), ForeignKey("knowledge_points.kp_id"))
+    kp_id = Column(String(32), ForeignKey("knowledge_points.kp_id"), index=True)
     kp_text = Column(Text)
     review_type = Column(String(32), nullable=False, default="manual")
     result = Column(String(32))
@@ -236,7 +236,7 @@ class WorkflowStep(Base):
     __tablename__ = "workflow_steps"
 
     step_id = Column(String(32), primary_key=True)
-    run_id = Column(String(32), ForeignKey("workflow_runs.run_id"), nullable=False)
+    run_id = Column(String(32), ForeignKey("workflow_runs.run_id"), nullable=False, index=True)
     step_name = Column(String(100), nullable=False)
     step_order = Column(Integer, nullable=False)
     status = Column(String(32), nullable=False, default="pending")

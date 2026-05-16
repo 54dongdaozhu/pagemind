@@ -35,6 +35,10 @@ _INDEXES = [
     ("ix_tool_call_logs_user_id", "tool_call_logs", "user_id"),
     ("ix_event_log_user_id", "event_log", "user_id"),
     ("ix_event_log_entity_id", "event_log", "entity_id"),
+    ("ix_chunks_version_id", "chunks", "version_id"),
+    ("ix_workflow_steps_run_id", "workflow_steps", "run_id"),
+    ("ix_study_status_history_kp_id", "study_status_history", "kp_id"),
+    ("ix_review_records_kp_id", "review_records", "kp_id"),
 ]
 
 
