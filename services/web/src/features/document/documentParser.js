@@ -130,6 +130,96 @@ async function parseDocx(file) {
   return result.value
 }
 
+async function flattenOutline(pdf, nodes, level = 1) {
+  const result = []
+  for (const node of nodes) {
+    let pageNum = null
+    try {
+      let dest = node.dest
+      if (typeof dest === 'string') dest = await pdf.getDestination(dest)
+      if (Array.isArray(dest) && dest[0] != null) {
+        pageNum = await pdf.getPageIndex(dest[0]) + 1
+      }
+    } catch { /* dest may be unresolvable; skip */ }
+    if (node.title) result.push({ text: node.title, level, pageNum })
+    if (node.items?.length) {
+      result.push(...await flattenOutline(pdf, node.items, level + 1))
+    }
+  }
+  return result
+}
+
+function buildPageHtml(textContent, viewport, pageNum) {
+  const raw = textContent.items
+    .filter(item => item.str.trim())
+    .map(item => ({
+      str: item.str,
+      x: item.transform[4],
+      y: viewport.height - item.transform[5],
+      fontSize: Math.abs(item.transform[3]) || 1,
+      width: item.width,
+    }))
+  if (!raw.length) return null
+
+  raw.sort((a, b) => a.y - b.y || a.x - b.x)
+
+  const sizes = raw.map(i => i.fontSize).sort((a, b) => a - b)
+  const median = sizes[Math.floor(sizes.length / 2)]
+  const lineGap = Math.max(median * 0.6, 2)
+
+  const lines = []
+  for (const item of raw) {
+    const last = lines[lines.length - 1]
+    if (last && Math.abs(item.y - last.y) <= lineGap) {
+      last.items.push(item)
+    } else {
+      lines.push({ y: item.y, items: [item] })
+    }
+  }
+
+  function joinLine(items) {
+    items.sort((a, b) => a.x - b.x)
+    let text = items[0].str
+    for (let i = 1; i < items.length; i++) {
+      const prev = items[i - 1]
+      const gap = items[i].x - (prev.x + prev.width)
+      if (gap > median * 0.3 && !text.endsWith(' ') && !items[i].str.startsWith(' ')) {
+        text += ' '
+      }
+      text += items[i].str
+    }
+    return text.trim()
+  }
+
+  const parts = [`<section class="pdf-page" id="pdf-page-${pageNum}">`]
+  let inP = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const text = joinLine(line.items)
+    if (!text) continue
+    const maxSize = Math.max(...line.items.map(it => it.fontSize))
+    const gapAbove = i > 0 ? line.y - lines[i - 1].y : 0
+    const isHeading = maxSize > median * 1.25
+
+    if (isHeading) {
+      if (inP) { parts.push('</p>'); inP = false }
+      const h = maxSize > median * 1.8 ? 1 : maxSize > median * 1.5 ? 2 : 3
+      parts.push(`<h${h}>${escapeHtml(text)}</h${h}>`)
+    } else if (!inP || gapAbove > median * 1.5) {
+      if (inP) parts.push('</p>')
+      parts.push(`<p>${escapeHtml(text)}`)
+      inP = true
+    } else {
+      const sep = parts[parts.length - 1].endsWith('-') ? '' : ' '
+      parts[parts.length - 1] += sep + escapeHtml(text)
+    }
+  }
+  if (inP) parts.push('</p>')
+  parts.push('</section>')
+  return parts.join('')
+}
+
 async function parsePdf(file) {
   const [pdfjsLib, { default: pdfWorkerUrl }] = await Promise.all([
     import('pdfjs-dist'),
@@ -142,11 +232,13 @@ async function parsePdf(file) {
 
   const pageResults = await Promise.all(
     Array.from({ length: pdf.numPages }, async (_, i) => {
-      const pageNumber = i + 1
-      const page = await pdf.getPage(pageNumber)
-      const content = await page.getTextContent()
-      const text = content.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim()
-      return text ? `<section class="pdf-page"><h2>第 ${pageNumber} 页</h2>${paragraphsToHtml(text)}</section>` : null
+      const pageNum = i + 1
+      const page = await pdf.getPage(pageNum)
+      const [textContent, viewport] = await Promise.all([
+        page.getTextContent(),
+        Promise.resolve(page.getViewport({ scale: 1 })),
+      ])
+      return buildPageHtml(textContent, viewport, pageNum)
     })
   )
   const pages = pageResults.filter(Boolean)
@@ -155,7 +247,10 @@ async function parsePdf(file) {
     throw new Error('PDF 未提取到可阅读文本，扫描版 PDF 请先 OCR 后再上传')
   }
 
-  return pages.join('')
+  const rawOutline = await pdf.getOutline()
+  const outline = rawOutline ? await flattenOutline(pdf, rawOutline) : []
+
+  return { html: pages.join(''), outline }
 }
 
 async function parseZipBundle(file) {
@@ -205,7 +300,10 @@ export async function parseDocumentFile(file) {
   }
 
   if (extension === '.docx') return { name: file.name, html: await parseDocx(file) }
-  if (extension === '.pdf') return { name: file.name, html: await parsePdf(file) }
+  if (extension === '.pdf') {
+    const pdfResult = await parsePdf(file)
+    return { name: file.name, ...pdfResult }
+  }
   if (extension === '.zip') return parseZipBundle(file)
 
   const text = await file.text()

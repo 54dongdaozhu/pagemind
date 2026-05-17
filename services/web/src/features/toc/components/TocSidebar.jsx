@@ -124,7 +124,7 @@ function TocSidebar({
                     <div
                       key={item.id}
                       className={`toc-item toc-level-${item.level}${activeTocId === item.id ? ' toc-active' : ''}${item.hasChildren ? ' toc-has-children' : ''}`}
-                      onClick={() => onSelectHeading(item.id)}
+                      onClick={() => onSelectHeading(item)}
                       title={item.text}
                     >
                       <button

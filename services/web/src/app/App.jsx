@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { fetchCurrentUser, logoutUser } from '../api/auth'
 import { indexRagDocument } from '../api/rag'
 import AuthScreen from '../features/auth/AuthScreen'
@@ -43,6 +43,11 @@ function App() {
   const documentAreaRef = useRef(null)
   const highlightedIdsRef = useRef(new Set())
   const documentSnapshotsRef = useRef(new Map())
+
+  const activeDoc = useMemo(
+    () => documents.find(d => d.id === activeDocId) ?? null,
+    [documents, activeDocId]
+  )
 
   useEffect(() => {
     let active = true
@@ -99,7 +104,7 @@ function App() {
   }, [resetDeep, resetExtraction])
 
   const handleHtmlLoaded = useCallback(async (document) => {
-    const { html, name, rawText, assets } = document
+    const { html, name, rawText, assets, outline } = document
     const plainText = htmlToPlainText(html)
     const chunks = splitIntoChunks(html)
     const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${name}:${plainText}`)
@@ -112,6 +117,7 @@ function App() {
         plainText,
         rawText,
         assets,
+        outline: outline ?? [],
       }
       const index = prev.findIndex(doc => doc.id === docId)
       if (index === -1) return [nextDoc, ...prev]
@@ -280,46 +286,80 @@ function App() {
   // 提取目录（文档加载后）
   useEffect(() => {
     if (!docLoaded || !docContentRef.current) return
-    const items = []
-    let counter = 0
-    docContentRef.current.querySelectorAll('h1, h2, h3, h4').forEach(h => {
-      const level = parseInt(h.tagName[1])
-      const text = h.textContent.trim()
-      if (!text) return
-      const id = `doc-h-${counter++}`
-      h.id = id
-      items.push({ id, text, level })
-    })
+    let items
+    if (activeDoc?.outline?.length > 0) {
+      items = activeDoc.outline.map((item, i) => ({
+        id: `pdf-outline-${i}`,
+        text: item.text,
+        level: Math.min(item.level, 4),
+        pageNum: item.pageNum,
+      }))
+    } else {
+      const headingItems = []
+      let counter = 0
+      docContentRef.current.querySelectorAll('h1, h2, h3, h4').forEach(h => {
+        const level = parseInt(h.tagName[1])
+        const text = h.textContent.trim()
+        if (!text) return
+        const id = `doc-h-${counter++}`
+        h.id = id
+        headingItems.push({ id, text, level })
+      })
+      items = headingItems
+    }
     setTocItems(items)
     setActiveTocId(null)
-  }, [activeDocId, docLoaded])
+  }, [activeDocId, docLoaded, activeDoc?.outline])
 
   // IntersectionObserver 跟踪当前章节
   useEffect(() => {
     if (!docLoaded || tocItems.length === 0 || !documentAreaRef.current) return
     const root = documentAreaRef.current
+    const hasPdfOutline = tocItems.some(i => i.pageNum != null)
+
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries.filter(e => e.isIntersecting)
-        if (visible.length > 0) setActiveTocId(visible[0].target.id)
+        if (visible.length === 0) return
+        if (hasPdfOutline) {
+          const pageNums = visible
+            .map(e => parseInt(e.target.id.replace('pdf-page-', ''), 10))
+            .filter(n => !isNaN(n))
+          if (!pageNums.length) return
+          const currentPage = Math.min(...pageNums)
+          let activeItem = null
+          for (const item of tocItems) {
+            if (item.pageNum != null && item.pageNum <= currentPage) activeItem = item
+          }
+          if (activeItem) setActiveTocId(activeItem.id)
+        } else {
+          setActiveTocId(visible[0].target.id)
+        }
       },
       { root, rootMargin: '0px 0px -65% 0px', threshold: 0 }
     )
-    tocItems.forEach(item => {
-      const el = document.getElementById(item.id)
-      if (el) observer.observe(el)
-    })
+
+    if (hasPdfOutline) {
+      docContentRef.current?.querySelectorAll('section.pdf-page').forEach(el => observer.observe(el))
+    } else {
+      tocItems.forEach(item => {
+        const el = document.getElementById(item.id)
+        if (el) observer.observe(el)
+      })
+    }
     return () => observer.disconnect()
   }, [docLoaded, tocItems])
 
-  const scrollToHeading = (id) => {
-    const el = document.getElementById(id)
+  const scrollToTocItem = (item) => {
     const container = documentAreaRef.current
-    if (el && container) {
-      const elTop = el.getBoundingClientRect().top
-      const containerTop = container.getBoundingClientRect().top
-      container.scrollBy({ top: elTop - containerTop - 24, behavior: 'smooth' })
-      setActiveTocId(id)
+    if (!container) return
+    const el = item.pageNum != null
+      ? docContentRef.current?.querySelector(`#pdf-page-${item.pageNum}`)
+      : document.getElementById(item.id)
+    if (el) {
+      const offset = el.getBoundingClientRect().top - container.getBoundingClientRect().top - 24
+      container.scrollBy({ top: offset, behavior: 'smooth' })
+      setActiveTocId(item.id)
     }
   }
 
@@ -393,7 +433,7 @@ function App() {
         onToggleDocList={() => setDocListOpen(open => !open)}
         onToggleTocSection={() => setTocSectionOpen(open => !open)}
         onSelectDocument={handleSelectDocument}
-        onSelectHeading={scrollToHeading}
+        onSelectHeading={scrollToTocItem}
       />
 
       <DocumentViewer
