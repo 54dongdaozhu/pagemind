@@ -104,7 +104,8 @@ function App() {
   }, [resetDeep, resetExtraction])
 
   const handleHtmlLoaded = useCallback(async (document) => {
-    const { html, name, rawText, assets, outline, images } = document
+    const { html, name, rawText, assets, outline, images, imagesPromise } = document
+    imagesPromise?.catch(() => {})
     const plainText = htmlToPlainText(html)
     const chunks = splitIntoChunks(html)
     const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${name}:${plainText}`)

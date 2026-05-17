@@ -73,6 +73,8 @@ def normalize_knowledge_item(kp: dict, original_text: str) -> dict | None:
     kp_text = kp.get("text", "")
     if not isinstance(kp_text, str) or kp_text not in original_text:
         return None
+    if len(kp_text) < 2:
+        return None
     if kp_text in _BROAD_TERM_BLACKLIST:
         return None
     return {

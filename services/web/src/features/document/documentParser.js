@@ -100,22 +100,6 @@ function assetIdFromUrl(url) {
   return match ? match[1] : null
 }
 
-async function createAssetMap(files) {
-  const assets = new Map()
-  const imageFiles = files.filter(f => isImageFileName(getFilePath(f)))
-  if (imageFiles.length === 0) return assets
-  let idx = 0
-  const worker = async () => {
-    while (idx < imageFiles.length) {
-      const file = imageFiles[idx++]
-      const path = getFilePath(file)
-      const asset = await uploadImageAsset(file, path)
-      assets.set(path, asset.url)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, imageFiles.length) }, worker))
-  return assets
-}
 
 function pickMarkdownFile(files) {
   const markdownFiles = files.filter(file => MARKDOWN_EXTENSIONS.includes(getFileExtension(file.name)))
@@ -151,15 +135,16 @@ async function parseDocx(file) {
         if (contentType === 'image/svg+xml') return { src: '' }
         const idx = collectedImages.length
         collectedImages.push({ base64, contentType, idx })
-        return { src: `__pagemind_img_${idx}__` }
+        return { src: `data:${contentType};base64,${base64}` }
       }),
     }
   )
 
-  let html = result.value
-  const images = []
+  const html = result.value
 
-  if (collectedImages.length > 0) {
+  // Upload to asset server in background — don't block rendering
+  const imagesPromise = collectedImages.length === 0 ? Promise.resolve([]) : (async () => {
+    const images = []
     let i = 0
     const worker = async () => {
       while (i < collectedImages.length) {
@@ -168,18 +153,16 @@ async function parseDocx(file) {
           const ext = img.contentType.split('/')[1]?.split('+')[0] || 'png'
           const imageFile = base64ToFile(img.base64, img.contentType, `docx-image-${img.idx}.${ext}`)
           const uploaded = await uploadImageAsset(imageFile, `docx-image-${img.idx}`)
-          html = html.replace(`__pagemind_img_${img.idx}__`, uploaded.url)
           const assetId = assetIdFromUrl(uploaded.url)
           if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
-        } catch {
-          html = html.replace(`__pagemind_img_${img.idx}__`, '')
-        }
+        } catch { /* upload failed; skip */ }
       }
     }
     await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, collectedImages.length) }, worker))
-  }
+    return images
+  })()
 
-  return { html, images }
+  return { html, imagesPromise }
 }
 
 async function flattenOutline(pdf, nodes, level = 1) {
@@ -333,35 +316,37 @@ async function parsePdf(file) {
   const rawOutline = await pdf.getOutline()
   const outline = rawOutline ? await flattenOutline(pdf, rawOutline) : []
 
-  // Extract embedded images (best-effort, up to PDF_IMAGE_LIMIT total)
-  const images = []
-  const allPageImages = []
-  for (let i = 0; i < pdf.numPages && allPageImages.length < PDF_IMAGE_LIMIT; i++) {
-    const page = await pdf.getPage(i + 1)
-    const pageImages = await extractPdfPageImages(page, i + 1, pdfjsLib)
-    for (const img of pageImages) {
-      if (allPageImages.length >= PDF_IMAGE_LIMIT) break
-      allPageImages.push(img)
-    }
-  }
-
-  if (allPageImages.length > 0) {
-    let idx = 0
-    const worker = async () => {
-      while (idx < allPageImages.length) {
-        const img = allPageImages[idx++]
-        try {
-          const imageFile = base64ToFile(img.base64, 'image/png', `pdf-p${img.pageNum}-${img.name}.png`)
-          const uploaded = await uploadImageAsset(imageFile, `pdf-p${img.pageNum}-${img.name}`)
-          const assetId = assetIdFromUrl(uploaded.url)
-          if (assetId) images.push({ asset_id: assetId, page_num: img.pageNum, alt_text: '' })
-        } catch { /* upload failed; skip */ }
+  // Extract and upload images in background — don't block text rendering
+  const imagesPromise = (async () => {
+    const images = []
+    const allPageImages = []
+    for (let i = 0; i < pdf.numPages && allPageImages.length < PDF_IMAGE_LIMIT; i++) {
+      const page = await pdf.getPage(i + 1)
+      const pageImages = await extractPdfPageImages(page, i + 1, pdfjsLib)
+      for (const img of pageImages) {
+        if (allPageImages.length >= PDF_IMAGE_LIMIT) break
+        allPageImages.push(img)
       }
     }
-    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, allPageImages.length) }, worker))
-  }
+    if (allPageImages.length > 0) {
+      let idx = 0
+      const worker = async () => {
+        while (idx < allPageImages.length) {
+          const img = allPageImages[idx++]
+          try {
+            const imageFile = base64ToFile(img.base64, 'image/png', `pdf-p${img.pageNum}-${img.name}.png`)
+            const uploaded = await uploadImageAsset(imageFile, `pdf-p${img.pageNum}-${img.name}`)
+            const assetId = assetIdFromUrl(uploaded.url)
+            if (assetId) images.push({ asset_id: assetId, page_num: img.pageNum, alt_text: '' })
+          } catch { /* upload failed; skip */ }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, allPageImages.length) }, worker))
+    }
+    return images
+  })()
 
-  return { html: pages.join(''), outline, images }
+  return { html: pages.join(''), outline, imagesPromise }
 }
 
 async function parseZipBundle(file) {
@@ -388,25 +373,44 @@ async function parseMarkdownBundle(files, fallbackName) {
     throw new Error('未找到 Markdown 文件，请上传包含 .md 的文件夹或 zip')
   }
 
-  const assets = await createAssetMap(files)
+  // Build blob URL map immediately — no upload needed for rendering
+  const imageFiles = files.filter(f => isImageFileName(getFilePath(f)))
+  const assets = new Map()
+  for (const file of imageFiles) {
+    assets.set(getFilePath(file), URL.createObjectURL(file))
+  }
+
   const markdownPath = getFilePath(markdownFile)
   const rawMarkdown = await markdownFile.text()
   const html = markdownToHtml(rawMarkdown, {
     resolveImageUrl: createImageResolver(markdownPath, assets),
   })
 
-  const images = []
-  for (const url of assets.values()) {
-    const assetId = assetIdFromUrl(url)
-    if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
-  }
+  // Upload to asset server in background — don't block rendering
+  const imagesPromise = imageFiles.length === 0 ? Promise.resolve([]) : (async () => {
+    const images = []
+    let idx = 0
+    const worker = async () => {
+      while (idx < imageFiles.length) {
+        const file = imageFiles[idx++]
+        const path = getFilePath(file)
+        try {
+          const asset = await uploadImageAsset(file, path)
+          const assetId = assetIdFromUrl(asset.url)
+          if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
+        } catch { /* upload failed; skip */ }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, imageFiles.length) }, worker))
+    return images
+  })()
 
   return {
     name: markdownFile.name || fallbackName,
     html,
     rawText: rawMarkdown,
     assets,
-    images,
+    imagesPromise,
   }
 }
 
@@ -418,8 +422,8 @@ export async function parseDocumentFile(file) {
   }
 
   if (extension === '.docx') {
-    const { html, images } = await parseDocx(file)
-    return { name: file.name, html, images }
+    const { html, imagesPromise } = await parseDocx(file)
+    return { name: file.name, html, imagesPromise }
   }
   if (extension === '.pdf') {
     const pdfResult = await parsePdf(file)
