@@ -120,6 +120,7 @@ def index_document_text(
     chunks: list[str] | None = None,
     chunk_size: int = 800,
     chunk_overlap: int = 120,
+    images: list[dict] | None = None,
 ) -> dict:
     # 幂等性：已完成的文档跳过重新索引，避免前端重传时 status 倒退回 pending
     existing = get_rag_enrichment_status(user_id, doc_id)
@@ -171,6 +172,11 @@ def index_document_text(
             title=title,
         )
 
+    if images:
+        enqueued = enqueue_job(_analyze_images_job, user_id=user_id, doc_id=doc_id, images=images)
+        if not enqueued:
+            _rag_enrichment_executor.submit(_analyze_images_job, user_id=user_id, doc_id=doc_id, images=images)
+
     return {"indexed_count": len(canonical_chunks), "enrichment_status": "pending"}
 
 
@@ -178,6 +184,87 @@ def _normalize_input_chunks(chunks: list[str] | None) -> list[str]:
     if not chunks:
         return []
     return [chunk.strip() for chunk in chunks if isinstance(chunk, str) and chunk.strip()]
+
+
+_VISION_PROMPT = "请用中文简洁描述这张图片的内容，用于学习文档的图片注解，不超过100字。"
+_IMAGE_PER_DOC_LIMIT = 20
+_IMAGE_TIMEOUT_SECONDS = 60
+
+
+def _analyze_images_job(user_id: str, doc_id: str, images: list[dict]) -> None:
+    """RQ job: run vision LLM on each image, cache result, persist to document_images."""
+    import base64
+    from datetime import datetime, timezone
+
+    from app.core.database import DocumentImage, get_db
+    from app.modules.assets.service import ALLOWED_IMAGE_TYPES, IMAGE_ASSET_DIR
+    from app.shared.cache import IMAGE_VISION_CACHE_TTL_SECONDS, get_json, set_json
+    from app.shared.llm import call_vision_llm
+
+    now = datetime.now(timezone.utc)
+    limited = images[:_IMAGE_PER_DOC_LIMIT]
+    records = []
+
+    for img in limited:
+        asset_id = img.get("asset_id", "")
+        if not asset_id:
+            continue
+
+        cache_key = f"img:vision:asset:{asset_id}"
+        cached = get_json(cache_key)
+        if cached is not None:
+            description = cached.get("description")
+        else:
+            description = None
+            for content_type, ext in ALLOWED_IMAGE_TYPES.items():
+                if content_type == "image/svg+xml":
+                    continue
+                path = IMAGE_ASSET_DIR / f"{asset_id}{ext}"
+                if not path.is_file():
+                    continue
+                try:
+                    image_bytes = path.read_bytes()
+                    if len(image_bytes) > 8 * 1024 * 1024:
+                        break
+                    b64 = base64.b64encode(image_bytes).decode("utf-8")
+                    description = call_vision_llm(b64, content_type, _VISION_PROMPT, purpose="image_vision")
+                except Exception as exc:
+                    logger.warning("[ImageVision] asset=%s failed: %s", asset_id, exc)
+                break
+            if description:
+                set_json(cache_key, {"description": description}, IMAGE_VISION_CACHE_TTL_SECONDS)
+
+        records.append({
+            "doc_id": doc_id,
+            "user_id": user_id,
+            "asset_id": asset_id,
+            "page_num": img.get("page_num"),
+            "alt_text": img.get("alt_text") or "",
+            "vision_description": description,
+            "created_at": now,
+        })
+
+    if not records:
+        return
+
+    import sqlalchemy as _sa
+
+    with get_db() as db:
+        for rec in records:
+            existing = db.execute(
+                _sa.select(DocumentImage).where(
+                    DocumentImage.doc_id == rec["doc_id"],
+                    DocumentImage.user_id == rec["user_id"],
+                    DocumentImage.asset_id == rec["asset_id"],
+                )
+            ).scalar_one_or_none()
+            if existing:
+                if rec["vision_description"]:
+                    existing.vision_description = rec["vision_description"]
+            else:
+                db.add(DocumentImage(**rec))
+        db.commit()
+    logger.info("[ImageVision] persisted %d image records for doc=%s", len(records), doc_id)
 
 
 def _enrich_indexed_document_job(

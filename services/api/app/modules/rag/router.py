@@ -23,6 +23,7 @@ router = APIRouter(prefix="/api/rag", tags=["rag"])
 def index_rag_document(request: RagIndexRequest, current_user: User = Depends(get_current_user)):
     user_id_token = db_log.current_user_id.set(current_user.user_id)
     try:
+        images = [img.model_dump() for img in request.images] if request.images else None
         result = index_document_text(
             user_id=current_user.user_id,
             doc_id=request.doc_id,
@@ -31,6 +32,7 @@ def index_rag_document(request: RagIndexRequest, current_user: User = Depends(ge
             chunks=request.chunks,
             chunk_size=request.chunk_size,
             chunk_overlap=request.chunk_overlap,
+            images=images,
         )
         db_log.log_event(
             entity_type="document",

@@ -22,6 +22,12 @@ class AgentChatRequest(BaseModel):
     history: List[ChatMessage] = Field(default_factory=list)
 
 
+class ImageMeta(BaseModel):
+    asset_id: str
+    page_num: int | None = None
+    alt_text: str | None = None
+
+
 class RagIndexRequest(BaseModel):
     doc_id: str
     text: str
@@ -29,6 +35,7 @@ class RagIndexRequest(BaseModel):
     chunks: List[str] | None = None
     chunk_size: int = 800
     chunk_overlap: int = 120
+    images: List[ImageMeta] | None = None
 
 
 class RagIndexResponse(BaseModel):

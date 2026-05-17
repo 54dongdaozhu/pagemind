@@ -317,6 +317,23 @@ class ExtractCache(Base):
     expired_at = Column(DateTime(timezone=True))
 
 
+class DocumentImage(Base):
+    __tablename__ = "document_images"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    doc_id = Column(Text, nullable=False, index=True)
+    user_id = Column(String(64), nullable=False, index=True)
+    asset_id = Column(String(64), nullable=False, index=True)
+    page_num = Column(Integer, nullable=True)
+    alt_text = Column(Text, nullable=True)
+    vision_description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("doc_id", "user_id", "asset_id", name="uq_doc_user_image"),
+    )
+
+
 RagChunk = Chunk
 RagDocument = Document
 

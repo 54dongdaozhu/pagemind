@@ -1,7 +1,7 @@
 import { postJson } from './client'
 
 
-export function indexRagDocument(docId, text, title, chunks = null) {
+export function indexRagDocument(docId, text, title, chunks = null, images = null) {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 15000)
   return postJson(
@@ -11,6 +11,7 @@ export function indexRagDocument(docId, text, title, chunks = null) {
       text,
       title,
       chunks,
+      images: images?.length ? images : null,
     },
     { signal: controller.signal }
   ).finally(() => clearTimeout(timeoutId))

@@ -86,6 +86,19 @@ function getFilePath(file) {
 }
 
 const UPLOAD_CONCURRENCY = 5
+const PDF_IMAGE_LIMIT = 20
+
+function base64ToFile(base64, contentType, name) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new File([new Blob([bytes], { type: contentType })], name, { type: contentType })
+}
+
+function assetIdFromUrl(url) {
+  const match = String(url || '').match(/\/api\/assets\/images\/([a-f0-9]{32})/)
+  return match ? match[1] : null
+}
 
 async function createAssetMap(files) {
   const assets = new Map()
@@ -126,8 +139,47 @@ function createImageResolver(markdownPath, assets) {
 async function parseDocx(file) {
   const { default: mammoth } = await import('mammoth')
   const arrayBuffer = await file.arrayBuffer()
-  const result = await mammoth.convertToHtml({ arrayBuffer }, { styleMap: DOCX_STYLE_MAP })
-  return result.value
+  const collectedImages = []
+
+  const result = await mammoth.convertToHtml(
+    { arrayBuffer },
+    {
+      styleMap: DOCX_STYLE_MAP,
+      convertImage: mammoth.images.inline(async (element) => {
+        const base64 = await element.read('base64')
+        const contentType = element.contentType || 'image/png'
+        if (contentType === 'image/svg+xml') return { src: '' }
+        const idx = collectedImages.length
+        collectedImages.push({ base64, contentType, idx })
+        return { src: `__pagemind_img_${idx}__` }
+      }),
+    }
+  )
+
+  let html = result.value
+  const images = []
+
+  if (collectedImages.length > 0) {
+    let i = 0
+    const worker = async () => {
+      while (i < collectedImages.length) {
+        const img = collectedImages[i++]
+        try {
+          const ext = img.contentType.split('/')[1]?.split('+')[0] || 'png'
+          const imageFile = base64ToFile(img.base64, img.contentType, `docx-image-${img.idx}.${ext}`)
+          const uploaded = await uploadImageAsset(imageFile, `docx-image-${img.idx}`)
+          html = html.replace(`__pagemind_img_${img.idx}__`, uploaded.url)
+          const assetId = assetIdFromUrl(uploaded.url)
+          if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
+        } catch {
+          html = html.replace(`__pagemind_img_${img.idx}__`, '')
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, collectedImages.length) }, worker))
+  }
+
+  return { html, images }
 }
 
 async function flattenOutline(pdf, nodes, level = 1) {
@@ -220,6 +272,37 @@ function buildPageHtml(textContent, viewport, pageNum) {
   return parts.join('')
 }
 
+async function extractPdfPageImages(page, pageNum, pdfjsLib) {
+  const pageImages = []
+  try {
+    const opList = await page.getOperatorList()
+    const seen = new Set()
+    for (let j = 0; j < opList.fnArray.length; j++) {
+      if (opList.fnArray[j] !== pdfjsLib.OPS.paintImageXObject) continue
+      const name = opList.argsArray[j][0]
+      if (seen.has(name)) continue
+      seen.add(name)
+      const imgData = await Promise.race([
+        new Promise((resolve) => { try { page.objs.get(name, resolve) } catch { resolve(null) } }),
+        new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+      ])
+      if (!imgData?.data || imgData.width < 20 || imgData.height < 20) continue
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = imgData.width
+        canvas.height = imgData.height
+        const ctx = canvas.getContext('2d')
+        const id = ctx.createImageData(imgData.width, imgData.height)
+        id.data.set(imgData.data)
+        ctx.putImageData(id, 0, 0)
+        const base64 = canvas.toDataURL('image/png').split(',')[1]
+        if (base64) pageImages.push({ base64, pageNum, name })
+      } catch { /* canvas conversion failed; skip */ }
+    }
+  } catch { /* op list extraction failed; skip */ }
+  return pageImages
+}
+
 async function parsePdf(file) {
   const [pdfjsLib, { default: pdfWorkerUrl }] = await Promise.all([
     import('pdfjs-dist'),
@@ -250,7 +333,35 @@ async function parsePdf(file) {
   const rawOutline = await pdf.getOutline()
   const outline = rawOutline ? await flattenOutline(pdf, rawOutline) : []
 
-  return { html: pages.join(''), outline }
+  // Extract embedded images (best-effort, up to PDF_IMAGE_LIMIT total)
+  const images = []
+  const allPageImages = []
+  for (let i = 0; i < pdf.numPages && allPageImages.length < PDF_IMAGE_LIMIT; i++) {
+    const page = await pdf.getPage(i + 1)
+    const pageImages = await extractPdfPageImages(page, i + 1, pdfjsLib)
+    for (const img of pageImages) {
+      if (allPageImages.length >= PDF_IMAGE_LIMIT) break
+      allPageImages.push(img)
+    }
+  }
+
+  if (allPageImages.length > 0) {
+    let idx = 0
+    const worker = async () => {
+      while (idx < allPageImages.length) {
+        const img = allPageImages[idx++]
+        try {
+          const imageFile = base64ToFile(img.base64, 'image/png', `pdf-p${img.pageNum}-${img.name}.png`)
+          const uploaded = await uploadImageAsset(imageFile, `pdf-p${img.pageNum}-${img.name}`)
+          const assetId = assetIdFromUrl(uploaded.url)
+          if (assetId) images.push({ asset_id: assetId, page_num: img.pageNum, alt_text: '' })
+        } catch { /* upload failed; skip */ }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, allPageImages.length) }, worker))
+  }
+
+  return { html: pages.join(''), outline, images }
 }
 
 async function parseZipBundle(file) {
@@ -284,11 +395,18 @@ async function parseMarkdownBundle(files, fallbackName) {
     resolveImageUrl: createImageResolver(markdownPath, assets),
   })
 
+  const images = []
+  for (const url of assets.values()) {
+    const assetId = assetIdFromUrl(url)
+    if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
+  }
+
   return {
     name: markdownFile.name || fallbackName,
     html,
     rawText: rawMarkdown,
     assets,
+    images,
   }
 }
 
@@ -299,7 +417,10 @@ export async function parseDocumentFile(file) {
     throw new Error(`请上传 ${SUPPORTED_DOCUMENT_LABEL} 格式的文件`)
   }
 
-  if (extension === '.docx') return { name: file.name, html: await parseDocx(file) }
+  if (extension === '.docx') {
+    const { html, images } = await parseDocx(file)
+    return { name: file.name, html, images }
+  }
   if (extension === '.pdf') {
     const pdfResult = await parsePdf(file)
     return { name: file.name, ...pdfResult }

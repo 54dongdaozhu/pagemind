@@ -104,7 +104,7 @@ function App() {
   }, [resetDeep, resetExtraction])
 
   const handleHtmlLoaded = useCallback(async (document) => {
-    const { html, name, rawText, assets, outline } = document
+    const { html, name, rawText, assets, outline, images } = document
     const plainText = htmlToPlainText(html)
     const chunks = splitIntoChunks(html)
     const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${name}:${plainText}`)
@@ -138,7 +138,7 @@ function App() {
       return next
     })
 
-    indexRagDocument(docId, plainText, name, chunks)
+    indexRagDocument(docId, plainText, name, chunks, images?.length ? images : null)
       .then(() => {
         setRagReadyDocIds(prev => {
           const next = new Set(prev)

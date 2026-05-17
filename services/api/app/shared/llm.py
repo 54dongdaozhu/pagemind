@@ -12,6 +12,9 @@ from app.core.config import (
     FALLBACK_LLM_API_KEY,
     FALLBACK_LLM_BASE_URL,
     FALLBACK_LLM_MODEL,
+    VISION_LLM_API_KEY,
+    VISION_LLM_BASE_URL,
+    VISION_LLM_MODEL,
 )
 from app.shared.cache import PROMPT_CACHE_TTL_SECONDS, get_text, set_text, stable_hash
 from app.shared import db_log
@@ -163,6 +166,55 @@ def call_deepseek(
         raise HTTPException(status_code=503, detail=f"LLM 调用失败: {str(e)}")
     except (KeyError, IndexError) as e:
         raise HTTPException(status_code=500, detail=f"LLM 返回格式异常: {str(e)}")
+
+
+def call_vision_llm(
+    image_base64: str,
+    content_type: str,
+    prompt: str,
+    purpose: str | None = None,
+) -> str | None:
+    """Describe an image via a vision-capable LLM. Returns None if not configured or on failure."""
+    if not (VISION_LLM_API_KEY and VISION_LLM_BASE_URL and VISION_LLM_MODEL):
+        return None
+    data_url = f"data:{content_type};base64,{image_base64}"
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url, "detail": "low"}},
+                {"type": "text", "text": prompt},
+            ],
+        }
+    ]
+    start = time.monotonic()
+    try:
+        content, usage = _http_chat_completion(
+            VISION_LLM_BASE_URL, VISION_LLM_API_KEY, VISION_LLM_MODEL,
+            messages, 0.3, False,
+        )
+        db_log.log_llm_call(
+            provider="vision",
+            model=VISION_LLM_MODEL,
+            purpose=purpose,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            latency_ms=int((time.monotonic() - start) * 1000),
+            success=True,
+        )
+        return content.strip() or None
+    except Exception as exc:
+        logger.warning("[VisionLLM] image description failed: %s", exc)
+        db_log.log_llm_call(
+            provider="vision",
+            model=VISION_LLM_MODEL,
+            purpose=purpose,
+            latency_ms=int((time.monotonic() - start) * 1000),
+            success=False,
+            error_details={"error": str(exc)},
+        )
+        return None
 
 
 def call_deepseek_stream(
