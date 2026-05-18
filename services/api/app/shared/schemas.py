@@ -52,6 +52,15 @@ class RagEnrichmentStatusResponse(BaseModel):
     updated_at: str | None = None
 
 
+class DocTypeStatusResponse(BaseModel):
+    doc_id: str
+    status: str  # pending | running | completed | failed | unknown
+    doc_type: str | None = None
+    confidence: float | None = None
+    error: str | None = None
+    updated_at: str | None = None
+
+
 class RagSource(BaseModel):
     chunk_index: int
     content: str

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { ACCEPTED_DOCUMENT_TYPES } from '../document/documentParser'
 
 function AppHeader({
@@ -11,6 +12,20 @@ function AppHeader({
   onFileUpload,
   onLogout,
 }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const folderInputRef = useRef(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
   return (
     <header className="main-header">
       <div className="header-file">
@@ -35,12 +50,33 @@ function AppHeader({
             <span>隐藏已掌握</span>
           </label>
         )}
-        <label htmlFor="file-upload" className="upload-button">
-          上传文档
-        </label>
-        <label htmlFor="folder-upload" className="upload-button secondary">
-          上传文件夹
-        </label>
+        <div className="upload-dropdown" ref={menuRef}>
+          <button
+            type="button"
+            className="upload-button"
+            onClick={() => setMenuOpen(v => !v)}
+          >
+            上传
+          </button>
+          {menuOpen && (
+            <div className="upload-menu">
+              <button
+                type="button"
+                className="upload-menu-item"
+                onClick={() => { setMenuOpen(false); fileInputRef.current?.click() }}
+              >
+                上传文件
+              </button>
+              <button
+                type="button"
+                className="upload-menu-item"
+                onClick={() => { setMenuOpen(false); folderInputRef.current?.click() }}
+              >
+                上传文件夹
+              </button>
+            </div>
+          )}
+        </div>
         <div className="user-menu" title={user?.email}>
           <span className="user-avatar">{(user?.username || user?.email || 'U').slice(0, 1).toUpperCase()}</span>
           <span className="user-name">{user?.username || user?.email}</span>
@@ -49,6 +85,7 @@ function AppHeader({
           </button>
         </div>
         <input
+          ref={fileInputRef}
           id="file-upload"
           type="file"
           accept={ACCEPTED_DOCUMENT_TYPES}
@@ -56,6 +93,7 @@ function AppHeader({
           style={{ display: 'none' }}
         />
         <input
+          ref={folderInputRef}
           id="folder-upload"
           type="file"
           webkitdirectory=""

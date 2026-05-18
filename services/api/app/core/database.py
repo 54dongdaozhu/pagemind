@@ -43,6 +43,8 @@ class Document(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     current_version_id = Column(Text)
     status = Column(String(32), nullable=False, default="indexed")
+    doc_type = Column(String(64), nullable=True)
+    doc_type_confidence = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 

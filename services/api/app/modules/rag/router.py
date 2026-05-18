@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.database import User
 from app.shared.schemas import (
+    DocTypeStatusResponse,
     RagEnrichmentStatusResponse,
     RagIndexRequest,
     RagIndexResponse,
@@ -13,7 +14,7 @@ from app.shared.schemas import (
 from app.shared import db_log
 from app.modules.auth.service import get_current_user
 from app.modules.rag import answer_with_rag, index_document_text
-from app.modules.rag.service import get_rag_enrichment_status
+from app.modules.rag.service import get_doc_type_status, get_rag_enrichment_status
 
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
@@ -54,6 +55,12 @@ def index_rag_document(request: RagIndexRequest, current_user: User = Depends(ge
 def rag_index_status(doc_id: str, current_user: User = Depends(get_current_user)):
     data = get_rag_enrichment_status(current_user.user_id, doc_id)
     return RagEnrichmentStatusResponse(**data)
+
+
+@router.get("/document-type", response_model=DocTypeStatusResponse)
+def get_document_type(doc_id: str, current_user: User = Depends(get_current_user)):
+    data = get_doc_type_status(current_user.user_id, doc_id)
+    return DocTypeStatusResponse(**data)
 
 
 @router.post("/query", response_model=RagQueryResponse)

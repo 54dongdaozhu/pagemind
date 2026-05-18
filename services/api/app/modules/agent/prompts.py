@@ -230,6 +230,21 @@ RELATION_MAPPING_PROMPT = """你是 RelationMappingAgent，负责分析学习文
 {"relations":[{"source":"...","target":"...","relation":"prerequisite","reason":"..."}]}"""
 
 
+DOC_TYPE_PROMPT = """将学习文档分类为以下类型之一：教材、论文、讲义、技术文档、试卷、报告、其他。
+
+判断依据：
+- 教材：有章节结构、知识体系完整、面向学习者、含例题或习题
+- 论文：有摘要/引言/结论/参考文献、学术写作风格、提出研究问题
+- 讲义：PPT 风格或要点提纲、结构紧凑、配合课堂使用
+- 技术文档：API 说明/代码示例/操作步骤、面向实践者
+- 试卷：题目为主体、有评分或答题要求
+- 报告：分析型写作、有数据或调研结论、面向特定读者
+- 其他：不符合以上任何类型
+
+只输出 JSON：{"doc_type":"教材","confidence":0.85}
+confidence 为 0.0~1.0，表示分类把握程度。"""
+
+
 REVIEW_SCHEDULE_PROMPT = """你是 ReflectionAgent，负责根据学习状态和文档内容给出复习建议。
 
 请输出：
