@@ -33,6 +33,18 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    user_id = Column(String(64), ForeignKey("users.user_id"), primary_key=True)
+    background_text = Column(Text, nullable=False)
+    identity = Column(Text, nullable=True)
+    purpose = Column(Text, nullable=True)
+    learning_goals = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class Document(Base):
     __tablename__ = "documents"
 

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { fetchCurrentUser, logoutUser } from '../api/auth'
+import { fetchMyProfile } from '../api/profile'
 import { indexRagDocument } from '../api/rag'
 import AuthScreen from '../features/auth/AuthScreen'
 import DocumentViewer from '../features/document/components/DocumentViewer'
@@ -15,6 +16,8 @@ import {
 import KnowledgePanel from '../features/knowledge/components/KnowledgePanel'
 import { useKnowledgeExtraction } from '../features/knowledge/hooks/useKnowledgeExtraction'
 import { useKnowledgeStatus } from '../features/knowledge/hooks/useKnowledgeStatus'
+import PlanPage from '../features/plan/PlanPage'
+import ProfilePage from '../features/profile/ProfilePage'
 import SidebarHeader from '../features/toc/components/SidebarHeader'
 import TocSidebar from '../features/toc/components/TocSidebar'
 import { hashString } from '../utils/hash'
@@ -25,6 +28,9 @@ import '../styles/App.css'
 function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
+  const [mode, setMode] = useState('normal')
+  const [userProfile, setUserProfile] = useState(null)
+  const [profileLoaded, setProfileLoaded] = useState(false)
   const [selectedKP, setSelectedKP] = useState(null)
   const [hideKnown, setHideKnown] = useState(true)
   const [documents, setDocuments] = useState([])
@@ -69,6 +75,13 @@ function App() {
       window.removeEventListener('auth:expired', handleExpired)
     }
   }, [])
+
+  useEffect(() => {
+    if (!currentUser) return
+    fetchMyProfile()
+      .then(p => { if (p) setUserProfile(p) })
+      .finally(() => setProfileLoaded(true))
+  }, [currentUser])
 
   const {
     extracting,
@@ -419,57 +432,68 @@ function App() {
         hideKnown={hideKnown}
         onHideKnownChange={setHideKnown}
         onFileUpload={handleFileUpload}
-        onLogout={handleLogout}
+        mode={mode}
+        onModeChange={setMode}
       />
 
-      <TocSidebar
-        tocOpen={tocOpen}
-        documents={documents}
-        activeDocId={activeDocId}
-        docListOpen={docListOpen}
-        tocSectionOpen={tocSectionOpen}
-        tocItems={tocItems}
-        activeTocId={activeTocId}
-        docLoaded={docLoaded}
-        onToggleDocList={() => setDocListOpen(open => !open)}
-        onToggleTocSection={() => setTocSectionOpen(open => !open)}
-        onSelectDocument={handleSelectDocument}
-        onSelectHeading={scrollToTocItem}
-      />
+      {mode === 'normal' ? (
+        <>
+          <TocSidebar
+            tocOpen={tocOpen}
+            documents={documents}
+            activeDocId={activeDocId}
+            docListOpen={docListOpen}
+            tocSectionOpen={tocSectionOpen}
+            tocItems={tocItems}
+            activeTocId={activeTocId}
+            docLoaded={docLoaded}
+            onToggleDocList={() => setDocListOpen(open => !open)}
+            onToggleTocSection={() => setTocSectionOpen(open => !open)}
+            onSelectDocument={handleSelectDocument}
+            onSelectHeading={scrollToTocItem}
+          />
 
-      <DocumentViewer
-        documentAreaRef={documentAreaRef}
-        docContentRef={docContentRef}
-        loading={loading}
-        error={error}
-        docLoaded={docLoaded}
-      />
+          <DocumentViewer
+            documentAreaRef={documentAreaRef}
+            docContentRef={docContentRef}
+            loading={loading}
+            error={error}
+            docLoaded={docLoaded}
+          />
 
-      <KnowledgePanel
-        key={activeDocId || 'empty-document'}
-        selectedKP={selectedKP}
-        showDeep={showDeep}
-        deepLoading={deepLoading}
-        deepExplanation={deepExplanation}
-        extracting={extracting}
-        extractProgress={extractProgress}
-        extractError={extractError}
-        refinementStatus={refinementStatus}
-        refinementRunId={refinementRunId}
-        docLoaded={docLoaded}
-        docId={activeDocId}
-        ragReady={Boolean(activeDocId && ragReadyDocIds.has(activeDocId))}
-        ragError={activeDocId ? ragIndexErrors.get(activeDocId) : ''}
-        knowledgePoints={uniqueKPs}
-        stats={stats}
-        getKpStatus={getKpStatus}
-        onCloseSelected={() => setSelectedKP(null)}
-        onStartDeepExplain={startDeepExplain}
-        onToggleKnown={toggleKnown}
-        onCloseDeep={closeDeep}
-        onCardClick={handleKPCardClick}
-        onCardDoubleClick={handleKPCardDblClick}
-      />
+          <KnowledgePanel
+            key={activeDocId || 'empty-document'}
+            selectedKP={selectedKP}
+            showDeep={showDeep}
+            deepLoading={deepLoading}
+            deepExplanation={deepExplanation}
+            extracting={extracting}
+            extractProgress={extractProgress}
+            extractError={extractError}
+            refinementStatus={refinementStatus}
+            refinementRunId={refinementRunId}
+            docLoaded={docLoaded}
+            docId={activeDocId}
+            ragReady={Boolean(activeDocId && ragReadyDocIds.has(activeDocId))}
+            ragError={activeDocId ? ragIndexErrors.get(activeDocId) : ''}
+            knowledgePoints={uniqueKPs}
+            stats={stats}
+            getKpStatus={getKpStatus}
+            onCloseSelected={() => setSelectedKP(null)}
+            onStartDeepExplain={startDeepExplain}
+            onToggleKnown={toggleKnown}
+            onCloseDeep={closeDeep}
+            onCardClick={handleKPCardClick}
+            onCardDoubleClick={handleKPCardDblClick}
+          />
+        </>
+      ) : mode === 'profile' ? (
+        <ProfilePage user={currentUser} onLogout={handleLogout} />
+      ) : mode === 'plan' ? (
+        <PlanPage userProfile={userProfile} profileLoaded={profileLoaded} onProfileSave={setUserProfile} />
+      ) : (
+        <div className="blank-mode-page">补全模式（开发中）</div>
+      )}
     </div>
   )
 }

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { ACCEPTED_DOCUMENT_TYPES } from '../document/documentParser'
 
+const MODES = [
+  { key: 'plan',     label: '计划模式' },
+  { key: 'normal',   label: '普通模式' },
+  { key: 'complete', label: '补全模式' },
+]
+
 function AppHeader({
   user,
   fileName,
@@ -10,7 +16,8 @@ function AppHeader({
   hideKnown,
   onHideKnownChange,
   onFileUpload,
-  onLogout,
+  mode,
+  onModeChange,
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
@@ -38,6 +45,18 @@ function AppHeader({
             提取中 {extractProgress.done}/{extractProgress.total}
           </span>
         )}
+      </div>
+      <div className="mode-tabs">
+        {MODES.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            className={`mode-tab${mode === key ? ' active' : ''}`}
+            onClick={() => onModeChange(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="header-controls">
         {docLoaded && (
@@ -77,13 +96,15 @@ function AppHeader({
             </div>
           )}
         </div>
-        <div className="user-menu" title={user?.email}>
+        <button
+          type="button"
+          className="user-menu"
+          title={user?.email}
+          onClick={() => onModeChange('profile')}
+        >
           <span className="user-avatar">{(user?.username || user?.email || 'U').slice(0, 1).toUpperCase()}</span>
           <span className="user-name">{user?.username || user?.email}</span>
-          <button type="button" className="logout-button" onClick={onLogout}>
-            退出
-          </button>
-        </div>
+        </button>
         <input
           ref={fileInputRef}
           id="file-upload"
