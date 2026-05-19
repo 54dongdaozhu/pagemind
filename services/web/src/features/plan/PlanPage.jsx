@@ -8,9 +8,10 @@ const PLAN_INIT = { status: 'idle', content: '', error: '' }
 
 function planReducer(state, action) {
   switch (action.type) {
-    case 'GENERATE': return { status: 'generating', content: '',             error: '' }
-    case 'RESOLVE':  return { status: 'ready',      content: action.payload, error: '' }
-    case 'REJECT':   return { status: 'error',      content: state.content,  error: action.payload }
+    case 'GENERATE': return { status: 'generating', content: '',                   error: '' }
+    case 'CHUNK':    return { ...state, content: state.content + action.payload }
+    case 'RESOLVE':  return { status: 'ready',      content: state.content,        error: '' }
+    case 'REJECT':   return { status: 'error',      content: state.content,        error: action.payload }
     case 'RESET':    return PLAN_INIT
     default:         return state
   }
@@ -25,14 +26,15 @@ function PlanContentArea({ plan, onReset }) {
       {status === 'idle' && (
         <p className="plan-content-hint">在右侧终端输入指令生成学习计划</p>
       )}
-      {status === 'generating' && (
+      {status === 'generating' && !content && (
         <p className="plan-content-hint">生成中...</p>
       )}
-      {status === 'ready' && (
-        <div className="plan-content-text">{content}</div>
+      {(status === 'generating' || status === 'ready') && content && (
+        <pre className="plan-content-pre">{content}</pre>
       )}
       {status === 'error' && (
         <div className="plan-content-error">
+          {content && <pre className="plan-content-pre">{content}</pre>}
           <span>{error}</span>
           <button type="button" onClick={onReset}>重试</button>
         </div>
@@ -43,7 +45,7 @@ function PlanContentArea({ plan, onReset }) {
 
 // ── 分屏主界面 ────────────────────────────────────────────────────────────────
 
-function PlanMain({ userProfile }) {
+function PlanMain({ userProfile, onProfileSave }) {
   const [plan, dispatch] = useReducer(planReducer, PLAN_INIT)
 
   return (
@@ -51,9 +53,11 @@ function PlanMain({ userProfile }) {
       <PlanContentArea plan={plan} onReset={() => dispatch({ type: 'RESET' })} />
       <PlanTerminalChat
         userProfile={userProfile}
+        onProfileSave={onProfileSave}
         planStatus={plan.status}
         onGenerate={() => dispatch({ type: 'GENERATE' })}
-        onResolve={content => dispatch({ type: 'RESOLVE', payload: content })}
+        onContentChunk={chunk => dispatch({ type: 'CHUNK', payload: chunk })}
+        onDone={() => dispatch({ type: 'RESOLVE' })}
         onReject={err => dispatch({ type: 'REJECT', payload: err })}
       />
     </div>
@@ -119,7 +123,7 @@ function PlanOnboarding({ onProfileSave }) {
 function PlanPage({ userProfile, profileLoaded, onProfileSave }) {
   if (!profileLoaded) return null
   if (!userProfile)   return <PlanOnboarding onProfileSave={onProfileSave} />
-  return <PlanMain userProfile={userProfile} />
+  return <PlanMain userProfile={userProfile} onProfileSave={onProfileSave} />
 }
 
 export default PlanPage
