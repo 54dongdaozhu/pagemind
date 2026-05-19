@@ -56,7 +56,7 @@ def stream_plan_agent(
     state["intent"] = intent
 
     if intent == "need_info":
-        yield from collect_info(["identity"])
+        yield _encode("question", "请问您能更具体地描述您想学习或了解的内容吗？")
         return
 
     if intent in ("gen_plan", "gen_doc"):

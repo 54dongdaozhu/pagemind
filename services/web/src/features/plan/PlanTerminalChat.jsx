@@ -59,49 +59,44 @@ function PlanTerminalChat({ userProfile, onProfileSave, planStatus, onGenerate, 
       let terminalReply = ''
       let assistantMsgAdded = false
 
+      function processLine(line) {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        let chunk
+        try { chunk = JSON.parse(trimmed) } catch { return }
+        const { type, text } = chunk
+        if (type === 'content') {
+          onContentChunk(text)
+        } else if (type === 'terminal') {
+          if (!assistantMsgAdded) {
+            setMessages(prev => [...prev, { role: 'assistant', text: '' }])
+            assistantMsgAdded = true
+          }
+          terminalReply += text
+          setMessages(prev => {
+            const next = [...prev]
+            next[next.length - 1] = { role: 'assistant', text: terminalReply }
+            return next
+          })
+        } else if (type === 'status') {
+          setMessages(prev => [...prev, { role: 'system', text }])
+        } else if (type === 'question') {
+          setMessages(prev => [...prev, { role: 'system', text }])
+          terminalReply += text
+        } else if (type === 'error') {
+          setMessages(prev => [...prev, { role: 'system', text: `错误：${text}` }])
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-
         const lines = buffer.split('\n')
         buffer = lines.pop()
-
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed) continue
-          let chunk
-          try {
-            chunk = JSON.parse(trimmed)
-          } catch {
-            continue
-          }
-
-          const { type, text } = chunk
-
-          if (type === 'content') {
-            onContentChunk(text)
-          } else if (type === 'terminal') {
-            if (!assistantMsgAdded) {
-              setMessages(prev => [...prev, { role: 'assistant', text: '' }])
-              assistantMsgAdded = true
-            }
-            terminalReply += text
-            setMessages(prev => {
-              const next = [...prev]
-              next[next.length - 1] = { role: 'assistant', text: terminalReply }
-              return next
-            })
-          } else if (type === 'status') {
-            setMessages(prev => [...prev, { role: 'system', text }])
-          } else if (type === 'question') {
-            setMessages(prev => [...prev, { role: 'system', text }])
-            terminalReply += text
-          } else if (type === 'error') {
-            setMessages(prev => [...prev, { role: 'system', text: `错误：${text}` }])
-          }
-        }
+        for (const line of lines) processLine(line)
       }
+      for (const line of buffer.split('\n')) processLine(line)
 
       if (terminalReply) {
         setHistory(prev => [

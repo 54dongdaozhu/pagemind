@@ -84,7 +84,7 @@ def generate_doc(state: dict) -> Generator[str, None, None]:
                         purpose="doc_quality_check",
                     )
                     quality = json.loads(quality_raw)
-                    if quality.get("ok", True):
+                    if quality.get("ok", False):
                         state["doc_quality_ok"] = True
                         break
                     yield _encode("status", "优化文档质量...")
