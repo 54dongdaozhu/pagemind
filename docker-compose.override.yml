@@ -10,6 +10,8 @@ services:
   api:
     ports:
       - "8000:8000"
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./services/api:/app
       - api-data:/data
