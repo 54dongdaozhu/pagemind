@@ -13,7 +13,6 @@ from sqlalchemy import select
 
 from app.core.database import UserProfile, get_db
 from app.shared.cache import USER_PROFILE_TTL_SECONDS, get_json, set_json
-from app.shared.job_queue import enqueue_job
 from app.shared.llm import call_deepseek
 
 
@@ -135,10 +134,8 @@ def analyze_and_save(user_id: str, background_text: str) -> dict:
         "purpose": result["purpose"],
         "learning_goals": result["learning_goals"],
     }
+    persist_user_profile(user_id, profile)
     set_json(_profile_cache_key(user_id), profile, USER_PROFILE_TTL_SECONDS)
-    enqueued = enqueue_job(persist_user_profile, user_id, profile)
-    if not enqueued:
-        persist_user_profile(user_id, profile)
     return profile
 
 

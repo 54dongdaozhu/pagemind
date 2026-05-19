@@ -15,6 +15,7 @@ from app.modules.extraction import router as extraction_router
 from app.modules.health import router as health_router
 from app.modules.knowledge import router as knowledge_router
 from app.modules.observability import router as obs_router
+from app.modules.plan import router as plan_router
 from app.modules.profile import router as profile_router
 from app.modules.rag import router as rag_router
 
@@ -70,6 +71,7 @@ def create_app():
     _fast_api.include_router(extraction_router.router, dependencies=protected)
     _fast_api.include_router(explain_router.router, dependencies=protected)
     _fast_api.include_router(knowledge_router.router, dependencies=protected)
+    _fast_api.include_router(plan_router.router, dependencies=protected)
     _fast_api.include_router(profile_router.router, dependencies=protected)
     _fast_api.include_router(rag_router.router, dependencies=protected)
     _fast_api.include_router(obs_router.router, dependencies=protected)
