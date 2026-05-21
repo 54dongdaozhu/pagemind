@@ -35,6 +35,7 @@ function App() {
   const [hideKnown, setHideKnown] = useState(true)
   const [documents, setDocuments] = useState([])
   const [activeDocId, setActiveDocId] = useState('')
+  const [documentRenderToken, setDocumentRenderToken] = useState(0)
   const [ragReadyDocIds, setRagReadyDocIds] = useState(() => new Set())
   const [ragIndexErrors, setRagIndexErrors] = useState(() => new Map())
 
@@ -206,6 +207,18 @@ function App() {
     })
   }, [activeDocId, extractError, extractProgress, knowledgePoints, refinementRunId, refinementStatus])
 
+  useEffect(() => {
+    if (mode !== 'normal' || !docLoaded || !activeDoc || !docContentRef.current) return
+
+    const container = docContentRef.current
+    if (container.dataset.docId === activeDoc.id && container.innerHTML.trim()) return
+
+    container.innerHTML = activeDoc.html
+    container.dataset.docId = activeDoc.id
+    highlightedIdsRef.current = new Set()
+    setDocumentRenderToken(token => token + 1)
+  }, [activeDoc, docLoaded, mode])
+
   const handleSelectDocument = useCallback((docId) => {
     if (docId === activeDocId) return
     const doc = documents.find(item => item.id === docId)
@@ -230,38 +243,43 @@ function App() {
   }, [activeDocId, documents, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
 
   useEffect(() => {
-    if (!highlightResetToken || !docContentRef.current || !docLoaded) return
+    if (mode !== 'normal' || !highlightResetToken || !docContentRef.current || !docLoaded) return
     clearKnowledgeHighlights(docContentRef.current)
     highlightedIdsRef.current = new Set()
     setSelectedKP(null)
-  }, [docLoaded, highlightResetToken])
+  }, [docLoaded, documentRenderToken, highlightResetToken, mode])
 
   // 增量高亮
   useEffect(() => {
-    if (!docContentRef.current || !docLoaded) return
+    if (mode !== 'normal' || !docContentRef.current || !docLoaded) return
     highlightKnowledgePoints(docContentRef.current, uniqueKPs, getKpStatus, highlightedIdsRef.current)
-  }, [uniqueKPs, docLoaded, getKpStatus])
+    if (selectedKP) {
+      const mark = docContentRef.current.querySelector(`mark[data-kp-id="${selectedKP.id}"]`)
+      if (mark) mark.classList.add('active')
+    }
+  }, [uniqueKPs, docLoaded, documentRenderToken, getKpStatus, mode, selectedKP])
 
   // 同步 mark 状态 class
   useEffect(() => {
-    if (!docContentRef.current) return
+    if (mode !== 'normal' || !docContentRef.current) return
     for (const kpText in kpStatusMap) {
       updateMarkStatusInDom(docContentRef.current, kpText, kpStatusMap[kpText])
     }
-  }, [kpStatusMap])
+  }, [documentRenderToken, kpStatusMap, mode])
 
   // hideKnown 开关
   useEffect(() => {
-    if (!docContentRef.current) return
+    if (mode !== 'normal' || !docContentRef.current) return
     if (hideKnown) {
       docContentRef.current.classList.add('hide-known')
     } else {
       docContentRef.current.classList.remove('hide-known')
     }
-  }, [hideKnown, docLoaded])
+  }, [hideKnown, docLoaded, documentRenderToken, mode])
 
   // 文档点击/双击委托
   useEffect(() => {
+    if (mode !== 'normal' || !docLoaded) return
     const container = docContentRef.current
     if (!container) return
 
@@ -295,11 +313,11 @@ function App() {
       container.removeEventListener('click', handleClick)
       container.removeEventListener('dblclick', handleDoubleClick)
     }
-  }, [uniqueKPs, kpStatusMap, recordClick, startDeepExplain])
+  }, [uniqueKPs, kpStatusMap, recordClick, startDeepExplain, docLoaded, documentRenderToken, mode])
 
   // 提取目录（文档加载后）
   useEffect(() => {
-    if (!docLoaded || !docContentRef.current) return
+    if (mode !== 'normal' || !docLoaded || !docContentRef.current) return
     let items
     if (activeDoc?.outline?.length > 0) {
       items = activeDoc.outline.map((item, i) => ({
@@ -323,11 +341,11 @@ function App() {
     }
     setTocItems(items)
     setActiveTocId(null)
-  }, [activeDocId, docLoaded, activeDoc?.outline])
+  }, [activeDocId, docLoaded, activeDoc?.outline, documentRenderToken, mode])
 
   // IntersectionObserver 跟踪当前章节
   useEffect(() => {
-    if (!docLoaded || tocItems.length === 0 || !documentAreaRef.current) return
+    if (mode !== 'normal' || !docLoaded || tocItems.length === 0 || !documentAreaRef.current) return
     const root = documentAreaRef.current
     const hasPdfOutline = tocItems.some(i => i.pageNum != null)
 
@@ -362,7 +380,7 @@ function App() {
       })
     }
     return () => observer.disconnect()
-  }, [docLoaded, tocItems])
+  }, [docLoaded, documentRenderToken, mode, tocItems])
 
   const scrollToTocItem = (item) => {
     const container = documentAreaRef.current
