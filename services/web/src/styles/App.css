@@ -187,8 +187,17 @@ body {
   transition: grid-template-columns 0.25s ease;
 }
 
+.app.toc-resizing {
+  transition: none;
+}
+
 .app.toc-collapsed {
   grid-template-columns: 52px 1fr var(--kp-width);
+}
+
+body.toc-resize-active {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* ========== 左侧 Logo/Header 区域 ========== */
@@ -544,12 +553,43 @@ body {
 .toc-sidebar {
   grid-column: 1;
   grid-row: 2;
+  position: relative;
   background: var(--sidebar-bg);
   overflow-y: auto;
   overflow-x: hidden;
   border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
+}
+
+.toc-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  background: transparent;
+  outline: none;
+  z-index: 5;
+  touch-action: none;
+}
+
+.toc-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.12s;
+}
+
+.toc-resize-handle:hover::after,
+.toc-resize-handle:focus-visible::after,
+body.toc-resize-active .toc-resize-handle::after {
+  background: var(--sidebar-accent);
 }
 
 .toc-sidebar::-webkit-scrollbar {
@@ -891,22 +931,64 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.document-content .md-table-wrap,
 .document-content table {
-  border-collapse: collapse;
-  margin: 1.2em 0;
+  margin: 1.4em 0;
+}
+
+.document-content .md-table-wrap {
   width: 100%;
-  font-size: 0.9em;
+  overflow-x: auto;
+  border: 1px solid #D0D7DE;
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
 }
 
-.document-content table td,
-.document-content table th {
-  border: 1px solid var(--border);
-  padding: 8px 12px;
+.document-content .md-table-wrap table {
+  margin: 0;
+}
+
+.document-content table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  min-width: 100%;
+  font-size: 0.94em;
+  line-height: 1.6;
+}
+
+.document-content table th,
+.document-content table td {
+  border: 0;
+  border-right: 1px solid #D0D7DE;
+  border-bottom: 1px solid #D0D7DE;
+  padding: 12px 14px;
+  vertical-align: middle;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.document-content table th:last-child,
+.document-content table td:last-child {
+  border-right: 0;
+}
+
+.document-content table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .document-content table th {
-  background: var(--main-bg);
-  font-weight: 600;
+  background: #F6F8FA;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.document-content table tbody tr:nth-child(even) td {
+  background: #FAFBFC;
+}
+
+.document-content table code {
+  white-space: normal;
 }
 
 .document-content img {

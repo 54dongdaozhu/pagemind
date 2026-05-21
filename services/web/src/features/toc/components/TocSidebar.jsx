@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 function TocSidebar({
   tocOpen,
+  width,
+  minWidth,
+  maxWidth,
   documents,
   activeDocId,
   docListOpen,
@@ -13,7 +16,11 @@ function TocSidebar({
   onToggleTocSection,
   onSelectDocument,
   onSelectHeading,
+  onWidthChange,
+  onResizeActiveChange,
 }) {
+  const dragStateRef = useRef(null)
+  const [resizing, setResizing] = useState(false)
   const tocSignature = useMemo(() => tocItems.map(item => item.id).join('|'), [tocItems])
   const [collapsedState, setCollapsedState] = useState(() => ({
     signature: '',
@@ -67,42 +74,72 @@ function TocSidebar({
     })
   }
 
+  const clampWidth = useCallback((nextWidth) => {
+    return Math.min(maxWidth, Math.max(minWidth, nextWidth))
+  }, [maxWidth, minWidth])
+
+  const handleResizeMove = useCallback((event) => {
+    const dragState = dragStateRef.current
+    if (!dragState) return
+    onWidthChange(clampWidth(dragState.startWidth + event.clientX - dragState.startX))
+  }, [clampWidth, onWidthChange])
+
+  const stopResize = useCallback(() => {
+    dragStateRef.current = null
+    setResizing(false)
+  }, [])
+
+  const startResize = useCallback((event) => {
+    if (!tocOpen) return
+    event.preventDefault()
+    dragStateRef.current = {
+      startX: event.clientX,
+      startWidth: width,
+    }
+    setResizing(true)
+  }, [tocOpen, width])
+
+  const handleResizeKeyDown = (event) => {
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      onWidthChange(clampWidth(width + 8))
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      onWidthChange(clampWidth(width - 8))
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      onWidthChange(minWidth)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      onWidthChange(maxWidth)
+    }
+  }
+
+  useEffect(() => {
+    if (!resizing) {
+      onResizeActiveChange(false)
+      document.body.classList.remove('toc-resize-active')
+      return undefined
+    }
+
+    onResizeActiveChange(true)
+    document.body.classList.add('toc-resize-active')
+    window.addEventListener('pointermove', handleResizeMove)
+    window.addEventListener('pointerup', stopResize)
+    window.addEventListener('pointercancel', stopResize)
+
+    return () => {
+      document.body.classList.remove('toc-resize-active')
+      window.removeEventListener('pointermove', handleResizeMove)
+      window.removeEventListener('pointerup', stopResize)
+      window.removeEventListener('pointercancel', stopResize)
+    }
+  }, [handleResizeMove, onResizeActiveChange, resizing, stopResize])
+
   return (
     <aside className="toc-sidebar">
       {tocOpen && (
         <>
-          <section className="toc-section">
-            <button
-              className="toc-section-toggle"
-              type="button"
-              onClick={onToggleDocList}
-              aria-expanded={docListOpen}
-            >
-              <span className="toc-section-arrow" />
-              <span>文档</span>
-            </button>
-            {docListOpen && (
-              <nav className="doc-list-nav">
-                {documents.length === 0 ? (
-                  <div className="toc-empty">上传文档后显示列表</div>
-                ) : (
-                  documents.map(doc => (
-                    <button
-                      key={doc.id}
-                      className={`doc-list-item${activeDocId === doc.id ? ' doc-list-active' : ''}`}
-                      type="button"
-                      onClick={() => onSelectDocument(doc.id)}
-                      title={doc.name}
-                    >
-                      <span className="doc-list-icon">📄</span>
-                      <span className="doc-list-name">{doc.name}</span>
-                    </button>
-                  ))
-                )}
-              </nav>
-            )}
-          </section>
-
           <section className="toc-section">
             <button
               className="toc-section-toggle"
@@ -145,6 +182,50 @@ function TocSidebar({
               </nav>
             )}
           </section>
+
+          <section className="toc-section">
+            <button
+              className="toc-section-toggle"
+              type="button"
+              onClick={onToggleDocList}
+              aria-expanded={docListOpen}
+            >
+              <span className="toc-section-arrow" />
+              <span>文档</span>
+            </button>
+            {docListOpen && (
+              <nav className="doc-list-nav">
+                {documents.length === 0 ? (
+                  <div className="toc-empty">上传文档后显示列表</div>
+                ) : (
+                  documents.map(doc => (
+                    <button
+                      key={doc.id}
+                      className={`doc-list-item${activeDocId === doc.id ? ' doc-list-active' : ''}`}
+                      type="button"
+                      onClick={() => onSelectDocument(doc.id)}
+                      title={doc.name}
+                    >
+                      <span className="doc-list-icon">📄</span>
+                      <span className="doc-list-name">{doc.name}</span>
+                    </button>
+                  ))
+                )}
+              </nav>
+            )}
+          </section>
+          <div
+            className="toc-resize-handle"
+            role="separator"
+            tabIndex={0}
+            aria-label="调整目录宽度"
+            aria-orientation="vertical"
+            aria-valuemin={minWidth}
+            aria-valuemax={maxWidth}
+            aria-valuenow={width}
+            onPointerDown={startResize}
+            onKeyDown={handleResizeKeyDown}
+          />
         </>
       )}
     </aside>

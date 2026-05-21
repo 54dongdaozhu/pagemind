@@ -23,6 +23,9 @@ import TocSidebar from '../features/toc/components/TocSidebar'
 import { hashString } from '../utils/hash'
 import '../styles/App.css'
 
+const TOC_MIN_WIDTH = 240
+const TOC_MAX_WIDTH = Math.round(TOC_MIN_WIDTH * 1.3)
+
 // ========== React 组件 ==========
 
 function App() {
@@ -42,6 +45,8 @@ function App() {
   // 目录相关
   const [tocItems, setTocItems] = useState([])
   const [tocOpen, setTocOpen] = useState(true)
+  const [tocWidth, setTocWidth] = useState(TOC_MIN_WIDTH)
+  const [tocResizing, setTocResizing] = useState(false)
   const [docListOpen, setDocListOpen] = useState(true)
   const [tocSectionOpen, setTocSectionOpen] = useState(true)
   const [activeTocId, setActiveTocId] = useState(null)
@@ -434,8 +439,13 @@ function App() {
     return <AuthScreen onAuthenticated={setCurrentUser} />
   }
 
+  const appClassName = `app${tocOpen ? '' : ' toc-collapsed'}${tocResizing ? ' toc-resizing' : ''}`
+
   return (
-    <div className={`app${tocOpen ? '' : ' toc-collapsed'}`}>
+    <div
+      className={appClassName}
+      style={{ '--toc-width': `${tocWidth}px` }}
+    >
       <SidebarHeader
         tocOpen={tocOpen}
         onToggle={() => setTocOpen(!tocOpen)}
@@ -458,6 +468,9 @@ function App() {
         <>
           <TocSidebar
             tocOpen={tocOpen}
+            width={tocWidth}
+            minWidth={TOC_MIN_WIDTH}
+            maxWidth={TOC_MAX_WIDTH}
             documents={documents}
             activeDocId={activeDocId}
             docListOpen={docListOpen}
@@ -469,6 +482,8 @@ function App() {
             onToggleTocSection={() => setTocSectionOpen(open => !open)}
             onSelectDocument={handleSelectDocument}
             onSelectHeading={scrollToTocItem}
+            onWidthChange={setTocWidth}
+            onResizeActiveChange={setTocResizing}
           />
 
           <DocumentViewer

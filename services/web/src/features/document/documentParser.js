@@ -1,7 +1,7 @@
 import { markdownToHtml } from '../../utils/markdown'
 import { uploadImageAsset } from '../../api/assets'
 
-const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md', '.zip']
+const SUPPORTED_EXTENSIONS = ['.docx', '.pdf', '.txt', '.md', '.markdown', '.zip']
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown']
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']
 const DOCX_STYLE_MAP = [

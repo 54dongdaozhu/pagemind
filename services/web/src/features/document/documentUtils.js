@@ -2,7 +2,7 @@ export function splitIntoChunks(html) {
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
   const blocks = []
-  const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, td')
+  const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, th, td')
   elements.forEach(el => {
     const text = el.textContent.trim()
     if (text.length > 0) blocks.push(text)
@@ -30,7 +30,7 @@ export function htmlToPlainText(html) {
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
   const blocks = []
-  const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, td')
+  const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, th, td')
   elements.forEach(el => {
     const text = el.textContent.trim()
     if (text.length > 0) blocks.push(text)
