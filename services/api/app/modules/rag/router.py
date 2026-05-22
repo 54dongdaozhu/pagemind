@@ -1,10 +1,12 @@
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.database import User
 from app.shared.schemas import (
     DocTypeStatusResponse,
+    DocumentListResponse,
+    DocumentRenderResponse,
     RagEnrichmentStatusResponse,
     RagIndexRequest,
     RagIndexResponse,
@@ -14,6 +16,7 @@ from app.shared.schemas import (
 from app.shared import db_log
 from app.modules.auth.service import get_current_user
 from app.modules.rag import answer_with_rag, index_document_text
+from app.modules.rag.repository import get_persisted_document_render, list_persisted_documents
 from app.modules.rag.service import get_doc_type_status, get_rag_enrichment_status
 
 
@@ -34,6 +37,8 @@ def index_rag_document(request: RagIndexRequest, current_user: User = Depends(ge
             chunk_size=request.chunk_size,
             chunk_overlap=request.chunk_overlap,
             images=images,
+            render_html=request.render_html,
+            render_outline=[item.model_dump() for item in request.render_outline] if request.render_outline else None,
         )
         db_log.log_event(
             entity_type="document",
@@ -49,6 +54,19 @@ def index_rag_document(request: RagIndexRequest, current_user: User = Depends(ge
         )
     finally:
         db_log.current_user_id.reset(user_id_token)
+
+
+@router.get("/documents", response_model=DocumentListResponse)
+def list_rag_documents(current_user: User = Depends(get_current_user)):
+    return DocumentListResponse(documents=list_persisted_documents(current_user.user_id))
+
+
+@router.get("/documents/{doc_id}/render", response_model=DocumentRenderResponse)
+def get_rag_document_render(doc_id: str, current_user: User = Depends(get_current_user)):
+    data = get_persisted_document_render(current_user.user_id, doc_id)
+    if data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档渲染快照不存在")
+    return DocumentRenderResponse(**data)
 
 
 @router.get("/index/status", response_model=RagEnrichmentStatusResponse)

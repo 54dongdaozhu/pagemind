@@ -17,6 +17,7 @@ from app.modules.rag.repository import (
     list_document_chunks,
     save_indexed_document,
     scoped_doc_id,
+    update_document_render_snapshot,
 )
 from app.modules.rag.vector_store import index_chunks_in_chroma, retrieve_by_chroma
 
@@ -194,18 +195,30 @@ def index_document_text(
     chunk_size: int = 800,
     chunk_overlap: int = 120,
     images: list[dict] | None = None,
+    render_html: str | None = None,
+    render_outline: list[dict] | None = None,
 ) -> dict:
-    # 幂等性：已完成的文档跳过重新索引，避免前端重传时 status 倒退回 pending
-    existing = get_rag_enrichment_status(user_id, doc_id)
-    if existing.get("status") == "completed":
-        return {"indexed_count": existing.get("chunk_count") or 0, "enrichment_status": "completed"}
-
     canonical_chunks = _normalize_input_chunks(chunks)
     if canonical_chunks:
         normalized_text = normalize_text(text or "\n\n".join(canonical_chunks))
     else:
         normalized_text = normalize_text(text)
         canonical_chunks = split_text_for_rag(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    # 幂等性：已完成的文档跳过重新索引，避免前端重传时 status 倒退回 pending；
+    # 但仍写入/刷新渲染快照，保证老文档再次打开后也能被持久恢复。
+    existing = get_rag_enrichment_status(user_id, doc_id)
+    if existing.get("status") == "completed":
+        if render_html is not None:
+            update_document_render_snapshot(
+                user_id=user_id,
+                doc_id=doc_id,
+                render_html=render_html,
+                render_outline=render_outline,
+                title=title,
+            )
+        return {"indexed_count": existing.get("chunk_count") or len(canonical_chunks), "enrichment_status": "completed"}
+
     storage_doc_id = scoped_doc_id(user_id, doc_id)
     save_indexed_document(
         user_id=user_id,
@@ -214,6 +227,8 @@ def index_document_text(
         embeddings=None,
         summary=_quick_document_summary(normalized_text),
         title=title,
+        render_html=render_html,
+        render_outline=render_outline,
     )
 
     _save_enrichment_status(user_id, doc_id, {

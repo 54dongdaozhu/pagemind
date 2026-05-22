@@ -12,7 +12,7 @@ function escapeAttr(value) {
 }
 
 function isSafeImageUrl(url) {
-  return /^(blob:|https?:\/\/)/i.test(url)
+  return /^(blob:|https?:\/\/|\/api\/assets\/images\/)/i.test(url)
 }
 
 function renderInlineText(text) {

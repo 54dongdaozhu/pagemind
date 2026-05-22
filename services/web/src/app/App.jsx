@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { fetchCurrentUser, logoutUser } from '../api/auth'
 import { fetchMyProfile } from '../api/profile'
-import { indexRagDocument } from '../api/rag'
+import { fetchRagDocumentRender, fetchRagDocuments, indexRagDocument } from '../api/rag'
 import AuthScreen from '../features/auth/AuthScreen'
 import DocumentViewer from '../features/document/components/DocumentViewer'
+import { getDocumentSnapshot, saveDocumentSnapshot } from '../features/document/documentCache'
 import { useDocumentUpload } from '../features/document/hooks/useDocumentUpload'
 import { htmlToPlainText, splitIntoChunks } from '../features/document/documentUtils'
 import { useDeepExplanation } from '../features/explanation/useDeepExplanation'
@@ -37,6 +38,9 @@ function App() {
   const [selectedKP, setSelectedKP] = useState(null)
   const [hideKnown, setHideKnown] = useState(true)
   const [documents, setDocuments] = useState([])
+  const [persistedDocuments, setPersistedDocuments] = useState([])
+  const [persistedDocumentsLoading, setPersistedDocumentsLoading] = useState(false)
+  const [persistedDocumentsError, setPersistedDocumentsError] = useState('')
   const [activeDocId, setActiveDocId] = useState('')
   const [documentRenderToken, setDocumentRenderToken] = useState(0)
   const [ragReadyDocIds, setRagReadyDocIds] = useState(() => new Set())
@@ -89,6 +93,41 @@ function App() {
       .finally(() => setProfileLoaded(true))
   }, [currentUser])
 
+  useEffect(() => {
+    if (!currentUser) return
+    let active = true
+    setPersistedDocumentsLoading(true)
+    setPersistedDocumentsError('')
+    fetchRagDocuments()
+      .then(data => {
+        if (!active) return
+        const history = (data.documents || []).map(doc => ({
+          id: doc.doc_id,
+          name: doc.title || '未命名文档',
+          summary: doc.summary || '',
+          chunkCount: doc.chunk_count || 0,
+          renderAvailable: doc.render_available,
+          updatedAt: doc.updated_at,
+        }))
+        setPersistedDocuments(history)
+        setRagReadyDocIds(prev => {
+          const next = new Set(prev)
+          for (const doc of data.documents || []) {
+            if ((doc.chunk_count || 0) > 0) next.add(doc.doc_id)
+          }
+          return next
+        })
+      })
+      .catch(err => {
+        console.warn('历史文档列表加载失败:', err)
+        if (active) setPersistedDocumentsError(err.message || '历史文档加载失败')
+      })
+      .finally(() => {
+        if (active) setPersistedDocumentsLoading(false)
+      })
+    return () => { active = false }
+  }, [currentUser])
+
   const {
     extracting,
     extractProgress,
@@ -123,8 +162,9 @@ function App() {
   }, [resetDeep, resetExtraction])
 
   const handleHtmlLoaded = useCallback(async (document) => {
-    const { html, name, rawText, assets, outline, images, imagesPromise } = document
+    const { html, name, rawText, assets, outline, imagesPromise, renderHtmlPromise } = document
     imagesPromise?.catch(() => {})
+    renderHtmlPromise?.catch(() => {})
     const plainText = htmlToPlainText(html)
     const chunks = splitIntoChunks(html)
     const docId = hashString(`${currentUser?.user_id || 'anonymous'}:${name}:${plainText}`)
@@ -158,8 +198,44 @@ function App() {
       return next
     })
 
-    indexRagDocument(docId, plainText, name, chunks, images?.length ? images : null)
+    const persistedHtmlPromise = renderHtmlPromise || Promise.resolve(html)
+    Promise.all([
+      persistedHtmlPromise.catch(() => html),
+      imagesPromise?.catch(() => []) || Promise.resolve([]),
+    ]).then(([persistedHtml, images]) => {
+      const persistedDoc = {
+        id: docId,
+        name,
+        html: persistedHtml,
+        plainText,
+        rawText,
+        outline: outline ?? [],
+      }
+      saveDocumentSnapshot(persistedDoc).catch(() => {})
+      setDocuments(prev => prev.map(doc => (
+        doc.id === docId ? { ...doc, html: persistedHtml, renderAvailable: true } : doc
+      )))
+      return indexRagDocument(docId, plainText, name, chunks, images?.length ? images : null, {
+        html: persistedHtml,
+        outline: outline ?? [],
+      })
+    })
       .then(() => {
+        setPersistedDocuments(prev => {
+          const nextDoc = {
+            id: docId,
+            name,
+            summary: plainText.slice(0, 160),
+            chunkCount: chunks.length,
+            renderAvailable: true,
+            updatedAt: new Date().toISOString(),
+          }
+          const index = prev.findIndex(doc => doc.id === docId)
+          if (index === -1) return [nextDoc, ...prev]
+          const next = [...prev]
+          next[index] = { ...prev[index], ...nextDoc }
+          return next
+        })
         setRagReadyDocIds(prev => {
           const next = new Set(prev)
           next.add(docId)
@@ -224,9 +300,9 @@ function App() {
     setDocumentRenderToken(token => token + 1)
   }, [activeDoc, docLoaded, mode])
 
-  const handleSelectDocument = useCallback((docId) => {
-    if (docId === activeDocId) return
-    const doc = documents.find(item => item.id === docId)
+  const handleSelectDocument = useCallback(async (docId) => {
+    if (docId === activeDocId && docLoaded) return
+    let doc = documents.find(item => item.id === docId)
     if (!doc) return
 
     resetExtraction()
@@ -236,6 +312,29 @@ function App() {
     setTocItems([])
     setActiveTocId(null)
     highlightedIdsRef.current = new Set()
+
+    if (!doc.html) {
+      const cached = await getDocumentSnapshot(docId)
+      if (cached?.html) {
+        doc = { ...doc, ...cached }
+      } else {
+        try {
+          const restored = await fetchRagDocumentRender(docId)
+          doc = { ...doc, ...restored }
+          saveDocumentSnapshot(doc).catch(() => {})
+        } catch (err) {
+          console.error('文档渲染恢复失败:', err)
+          setRagIndexErrors(prev => {
+            const next = new Map(prev)
+            next.set(docId, err.message || '文档渲染恢复失败，请重新上传。')
+            return next
+          })
+          return
+        }
+      }
+      setDocuments(prev => prev.map(item => item.id === docId ? { ...item, ...doc } : item))
+    }
+
     showParsedDocument({ name: doc.name, html: doc.html })
     const snapshot = documentSnapshotsRef.current.get(docId) || {}
     restoreExtraction({
@@ -245,7 +344,56 @@ function App() {
       refinementStatus: snapshot.refinementStatus,
       refinementRunId: snapshot.refinementRunId,
     })
-  }, [activeDocId, documents, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
+  }, [activeDocId, docLoaded, documents, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
+
+  const handleOpenPersistedDocument = useCallback(async (docId) => {
+    const persisted = persistedDocuments.find(item => item.id === docId)
+    if (!persisted) return
+
+    resetExtraction()
+    setSelectedKP(null)
+    resetDeep()
+    setTocItems([])
+    setActiveTocId(null)
+    highlightedIdsRef.current = new Set()
+
+    let doc = documents.find(item => item.id === docId)
+    if (!doc?.html) {
+      const cached = await getDocumentSnapshot(docId)
+      if (cached?.html) {
+        doc = { ...persisted, ...cached, name: cached.name || persisted.name }
+      } else {
+        try {
+          const restored = await fetchRagDocumentRender(docId)
+          doc = { ...persisted, ...restored, name: restored.name || persisted.name }
+          saveDocumentSnapshot(doc).catch(() => {})
+        } catch (err) {
+          console.error('文档渲染恢复失败:', err)
+          setPersistedDocumentsError(err.message || '文档渲染恢复失败，请重新上传。')
+          return
+        }
+      }
+      setDocuments(prev => {
+        const index = prev.findIndex(item => item.id === docId)
+        if (index === -1) return [doc, ...prev]
+        const next = [...prev]
+        next[index] = { ...next[index], ...doc }
+        return next
+      })
+    }
+
+    setActiveDocId(docId)
+    showParsedDocument({ name: doc.name, html: doc.html })
+    const snapshot = documentSnapshotsRef.current.get(docId) || {}
+    restoreExtraction({
+      knowledgePoints: snapshot.knowledgePoints,
+      extractProgress: snapshot.extractProgress,
+      extractError: snapshot.extractError,
+      refinementStatus: snapshot.refinementStatus,
+      refinementRunId: snapshot.refinementRunId,
+    })
+    setMode('normal')
+  }, [documents, persistedDocuments, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
 
   useEffect(() => {
     if (mode !== 'normal' || !highlightResetToken || !docContentRef.current || !docLoaded) return
@@ -405,6 +553,9 @@ function App() {
     setCurrentUser(null)
     resetDocumentState()
     setDocuments([])
+    setPersistedDocuments([])
+    setPersistedDocumentsError('')
+    setPersistedDocumentsLoading(false)
     setRagReadyDocIds(new Set())
     setRagIndexErrors(new Map())
     documentSnapshotsRef.current = new Map()
@@ -521,7 +672,14 @@ function App() {
           />
         </>
       ) : mode === 'profile' ? (
-        <ProfilePage user={currentUser} onLogout={handleLogout} />
+        <ProfilePage
+          user={currentUser}
+          documents={persistedDocuments}
+          documentsLoading={persistedDocumentsLoading}
+          documentsError={persistedDocumentsError}
+          onOpenDocument={handleOpenPersistedDocument}
+          onLogout={handleLogout}
+        />
       ) : mode === 'plan' ? (
         <PlanPage userProfile={userProfile} profileLoaded={profileLoaded} onProfileSave={setUserProfile} />
       ) : (

@@ -387,8 +387,8 @@ async function parseMarkdownBundle(files, fallbackName) {
   })
 
   // Upload to asset server in background — don't block rendering
-  const imagesPromise = imageFiles.length === 0 ? Promise.resolve([]) : (async () => {
-    const images = []
+  const uploadedAssetsPromise = imageFiles.length === 0 ? Promise.resolve(new Map()) : (async () => {
+    const uploadedAssets = new Map()
     let idx = 0
     const worker = async () => {
       while (idx < imageFiles.length) {
@@ -396,14 +396,33 @@ async function parseMarkdownBundle(files, fallbackName) {
         const path = getFilePath(file)
         try {
           const asset = await uploadImageAsset(file, path)
-          const assetId = assetIdFromUrl(asset.url)
-          if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
+          uploadedAssets.set(path, asset.url)
         } catch { /* upload failed; skip */ }
       }
     }
     await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, imageFiles.length) }, worker))
-    return images
+    return uploadedAssets
   })()
+
+  const imagesPromise = uploadedAssetsPromise.then(uploadedAssets => {
+    const images = []
+    for (const url of uploadedAssets.values()) {
+      const assetId = assetIdFromUrl(url)
+      if (assetId) images.push({ asset_id: assetId, page_num: null, alt_text: '' })
+    }
+    return images
+  })
+
+  const renderHtmlPromise = uploadedAssetsPromise.then(uploadedAssets => {
+    if (uploadedAssets.size === 0) return html
+    const persistedAssets = new Map()
+    for (const [path, url] of uploadedAssets.entries()) {
+      persistedAssets.set(path, url)
+    }
+    return markdownToHtml(rawMarkdown, {
+      resolveImageUrl: createImageResolver(markdownPath, persistedAssets),
+    })
+  }).catch(() => html)
 
   return {
     name: markdownFile.name || fallbackName,
@@ -411,6 +430,7 @@ async function parseMarkdownBundle(files, fallbackName) {
     rawText: rawMarkdown,
     assets,
     imagesPromise,
+    renderHtmlPromise,
   }
 }
 

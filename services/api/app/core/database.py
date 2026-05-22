@@ -70,6 +70,8 @@ class DocumentVersion(Base):
     source_name = Column(Text)
     content_hash = Column(String(128), nullable=False)
     raw_text = Column(Text)
+    render_html = Column(Text, nullable=True)
+    render_outline = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
