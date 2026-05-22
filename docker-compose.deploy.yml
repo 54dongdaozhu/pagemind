@@ -27,7 +27,7 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  api:
+  backend:
     image: ${BACKEND_IMAGE:-ghcr.io/54dongdaozhu/pagemind-backend}:${IMAGE_TAG:-latest}
     depends_on:
       postgres:
@@ -53,7 +53,7 @@ services:
       BUILTIN_PASSWORD: ${BUILTIN_PASSWORD}
       BUILTIN_EMAIL: ${BUILTIN_EMAIL:-meng@local}
     volumes:
-      - api-data:/data
+      - backend-data:/data
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()\""]
       interval: 30s
@@ -84,14 +84,14 @@ services:
       BUILTIN_PASSWORD: ${BUILTIN_PASSWORD}
       BUILTIN_EMAIL: ${BUILTIN_EMAIL:-meng@local}
     volumes:
-      - api-data:/data
+      - backend-data:/data
     command: python worker.py
     restart: unless-stopped
 
-  web:
+  frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/54dongdaozhu/pagemind-frontend}:${IMAGE_TAG:-latest}
     depends_on:
-      api:
+      backend:
         condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-80}:80"
@@ -104,6 +104,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  api-data:
+  backend-data:
   postgres-data:
   redis-data:

@@ -6,15 +6,15 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-# ── sys.path: 把 services/api/ 加入，使 `from app.*` 在任意 CWD 下都可用 ───────
-_api_dir = str(Path(__file__).resolve().parent.parent)
-if _api_dir not in sys.path:
-    sys.path.insert(0, _api_dir)
+# ── sys.path: 把 services/backend/ 加入，使 `from app.*` 在任意 CWD 下都可用 ───────
+_backend_dir = str(Path(__file__).resolve().parent.parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 # ── 加载 .env（开发环境；生产环境由 Docker/k8s 注入）──────────────────────
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(_api_dir) / ".env")
+    load_dotenv(Path(_backend_dir) / ".env")
 except ImportError:
     pass
 

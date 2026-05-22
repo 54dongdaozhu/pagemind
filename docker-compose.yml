@@ -27,9 +27,9 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  api:
+  backend:
     build:
-      context: ./services/api
+      context: ./services/backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,7 +54,7 @@ services:
       BUILTIN_PASSWORD: ${BUILTIN_PASSWORD}
       BUILTIN_EMAIL: ${BUILTIN_EMAIL:-meng@local}
     volumes:
-      - api-data:/data
+      - backend-data:/data
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()\""]
       interval: 30s
@@ -65,7 +65,7 @@ services:
 
   worker:
     build:
-      context: ./services/api
+      context: ./services/backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,16 +86,16 @@ services:
       BUILTIN_PASSWORD: ${BUILTIN_PASSWORD}
       BUILTIN_EMAIL: ${BUILTIN_EMAIL:-meng@local}
     volumes:
-      - api-data:/data
+      - backend-data:/data
     command: python worker.py
     restart: unless-stopped
 
-  web:
+  frontend:
     build:
-      context: ./services/web
+      context: ./services/frontend
       target: runner
     depends_on:
-      api:
+      backend:
         condition: service_healthy
     ports:
       - "80:80"
@@ -122,7 +122,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  api-data:
+  backend-data:
   postgres-data:
   redis-data:
   certbot-webroot:

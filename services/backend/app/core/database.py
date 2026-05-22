@@ -378,7 +378,7 @@ def init_db() -> None:
     from alembic.config import Config
     from alembic import command
 
-    # alembic.ini 与本文件的相对位置：services/api/app/core/ → services/api/
-    _api_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    cfg = Config(os.path.join(_api_dir, "alembic.ini"))
+    # alembic.ini 与本文件的相对位置：services/backend/app/core/ → services/backend/
+    _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    cfg = Config(os.path.join(_backend_dir, "alembic.ini"))
     command.upgrade(cfg, "head")

@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```text
-services/web/
+services/frontend/
 ├── public/                 # 静态资源
 ├── src/
 │   ├── main.jsx            # React 挂载入口

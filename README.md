@@ -145,13 +145,13 @@ https://github.com/user-attachments/assets/5fb9914e-ca63-4b83-ba4e-5a6e2969b06f
 ```text
 ai-study-tool/
 ├── services/
-│   ├── web/                        # React + Vite 前端应用，生产镜像内由 nginx 托管
+│   ├── frontend/                   # React + Vite 前端应用，生产镜像内由 nginx 托管
 │   │   ├── public/
 │   │   ├── src/
 │   │   ├── nginx.conf
 │   │   ├── package.json
 │   │   └── vite.config.js
-│   └── api/                        # FastAPI API 与 RQ worker 共用代码
+│   └── backend/                    # FastAPI API 与 RQ worker 共用代码
 │       ├── main.py                 # uvicorn main:app 兼容入口
 │       ├── worker.py               # RQ worker 入口
 │       ├── requirements.txt
@@ -167,7 +167,7 @@ ai-study-tool/
 ├── docs/
 │   └── service-design.md           # 服务边界与容器设计
 ├── test-docs/                      # 本地测试文档样例
-├── docker-compose.yml              # api/web/worker/postgres/redis 编排
+├── docker-compose.yml              # backend/frontend/worker/postgres/redis 编排
 ├── docker-compose.override.yml     # 开发模式热加载覆盖
 ├── docker-compose.deploy.yml       # 服务器镜像部署编排
 └── README.md
@@ -231,13 +231,13 @@ docker compose -f docker-compose.yml up -d --build
 
 容器启动时会自动运行：
 
-- `api`：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
+- `backend`：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
 - `worker`：`python worker.py`
-- `web`：nginx 静态服务 + `/api/` 反向代理到 `api:8000`
+- `frontend`：nginx 静态服务 + `/api/` 反向代理到 `backend:8000`
 - `postgres`：独立 PostgreSQL 数据库
 - `redis`：独立 Redis 队列服务
 
-PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，Redis 会持久化到 `ai-study-tool_redis-data`，ChromaDB 向量库会持久化到 `ai-study-tool_api-data`。查看日志：
+PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，Redis 会持久化到 `ai-study-tool_redis-data`，ChromaDB 向量库会持久化到 `ai-study-tool_backend-data`。查看日志：
 
 ```bash
 docker compose -f docker-compose.yml logs -f
@@ -334,8 +334,8 @@ docker compose up --build
 # 后台启动
 docker compose up -d --build
 
-# 查看 API 日志
-docker compose logs -f api
+# 查看后端日志
+docker compose logs -f backend
 
 # 进入 PostgreSQL
 docker compose exec postgres psql -U pagemind -d pagemind
@@ -364,13 +364,13 @@ docker compose up -d postgres redis
 然后在本机运行后端：
 
 ```bash
-cd services/api
+cd services/backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-在 `services/api/.env` 中显式指向本地 PostgreSQL，不要省略 `DATABASE_URL`：
+在 `services/backend/.env` 中显式指向本地 PostgreSQL，不要省略 `DATABASE_URL`：
 
 ```env
 DEEPSEEK_API_KEY=你的_DeepSeek_API_Key
@@ -398,7 +398,7 @@ uvicorn main:app --reload --port 8000
 打开新终端：
 
 ```bash
-cd services/web
+cd services/frontend
 npm install
 npm run dev
 ```

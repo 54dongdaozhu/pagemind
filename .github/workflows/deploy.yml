@@ -105,11 +105,11 @@ jobs:
               echo "::group::docker compose ps"
               docker compose -f docker-compose.deploy.yml ps || true
               echo "::endgroup::"
-              echo "::group::api logs"
-              docker compose -f docker-compose.deploy.yml logs --tail 120 api || true
+              echo "::group::backend logs"
+              docker compose -f docker-compose.deploy.yml logs --tail 120 backend || true
               echo "::endgroup::"
-              echo "::group::web logs"
-              docker compose -f docker-compose.deploy.yml logs --tail 80 web || true
+              echo "::group::frontend logs"
+              docker compose -f docker-compose.deploy.yml logs --tail 80 frontend || true
               echo "::endgroup::"
             }
             trap dump_diagnostics ERR
