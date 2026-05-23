@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "doc_gen": "agents/orchestrator.py:build_graph"
+  },
+  "env": ".env"
+}

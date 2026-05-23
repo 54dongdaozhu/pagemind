@@ -1,22 +1,97 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { getWordDownloadUrl, resumeDocGen, startDocGen, streamDocGen } from '../../api/docGen'
 import { analyzeProfile } from '../../api/profile'
-import { streamPlanChat } from '../../api/plan'
+import HumanReviewModal from '../doc-gen/HumanReviewModal'
 
-function PlanTerminalChat({ userProfile, onProfileSave, planStatus, onGenerate, onContentChunk, onDone, onReject }) {
+const AGENT_LABELS = {
+  researcher: '研究员',
+  editor: '编辑',
+  writer: '写作',
+  reviewer: '审阅',
+  reviser: '修订',
+  publisher: '发布',
+}
+
+function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGenerate, onHtmlReady, onDone, onReject }) {
   const [messages, setMessages] = useState([
-    { role: 'system', text: '已加载用户画像，计划生成模块准备就绪。' },
+    { role: 'system', text: '已加载用户画像，文档生成模块准备就绪。' },
   ])
-  const [history, setHistory] = useState([])
   const [input, setInput] = useState('')
   const [showProfile, setShowProfile] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [taskId, setTaskId] = useState(null)
+  const [humanPayload, setHumanPayload] = useState(null)
+  const stopStreamRef = useRef(null)
   const messagesEndRef = useRef(null)
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  function addMsg(role, text) {
+    setMessages(prev => [...prev, { role, text }])
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+  }
+
+  function _startStream(tid) {
+    stopStreamRef.current?.()
+    const stop = streamDocGen(tid, {
+      onProgress: (msg) => {
+        const label = AGENT_LABELS[msg.agent] ? `[${AGENT_LABELS[msg.agent]}] ` : ''
+        addMsg('system', `${label}${msg.message}`)
+      },
+      onHumanInterrupt: (payload) => {
+        setHumanPayload(payload)
+        addMsg('system', '等待人工审核...')
+      },
+      onComplete: (msg) => {
+        const wordUrl = msg.word_url ? getWordDownloadUrl(tid) : null
+        onHtmlReady(msg.html || '', wordUrl)
+        addMsg('assistant', '文档已生成完成！')
+        onDone()
+      },
+      onError: (err) => {
+        onReject(err.message)
+        addMsg('system', `错误：${err.message}`)
+      },
+    })
+    stopStreamRef.current = stop
+  }
+
+  async function handleSend() {
+    const text = input.trim()
+    if (!text || planStatus === 'generating') return
+    addMsg('user', text)
+    setInput('')
+    onGenerate()
+
+    try {
+      const { task_id } = await startDocGen(text, '', userId || 'anonymous', userProfile)
+      setTaskId(task_id)
+      _startStream(task_id)
+    } catch (e) {
+      const msg = e.message || '启动失败'
+      onReject(msg)
+      addMsg('system', `错误：${msg}`)
+    }
+  }
+
+  async function handleHumanDecide(decision, feedback) {
+    setHumanPayload(null)
+    addMsg('system', decision === 'publish' ? '已批准，正在发布...' : '已要求修订，继续优化...')
+    try {
+      await resumeDocGen(taskId, decision, feedback)
+      _startStream(taskId)
+    } catch (e) {
+      onReject(e.message)
+      addMsg('system', `Resume 失败：${e.message}`)
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
 
   function handleEditOpen() {
     setEditText(userProfile?.background_text || '')
@@ -31,99 +106,16 @@ function PlanTerminalChat({ userProfile, onProfileSave, planStatus, onGenerate, 
       onProfileSave(profile)
       setEditing(false)
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'system', text: `保存失败：${e.message || '请稍后重试'}` }])
+      addMsg('system', `保存失败：${e.message || '请稍后重试'}`)
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function handleSend() {
-    const text = input.trim()
-    if (!text || planStatus === 'generating') return
-    setMessages(prev => [...prev, { role: 'user', text }])
-    setInput('')
-    onGenerate()
-
-    try {
-      const res = await streamPlanChat(text, history)
-      if (!res.ok) {
-        const err = `请求失败: ${res.status}`
-        onReject(err)
-        setMessages(prev => [...prev, { role: 'system', text: err }])
-        return
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let terminalReply = ''
-      let assistantMsgAdded = false
-
-      function processLine(line) {
-        const trimmed = line.trim()
-        if (!trimmed) return
-        let chunk
-        try { chunk = JSON.parse(trimmed) } catch { return }
-        const { type, text } = chunk
-        if (type === 'content') {
-          onContentChunk(text)
-        } else if (type === 'terminal') {
-          if (!assistantMsgAdded) {
-            setMessages(prev => [...prev, { role: 'assistant', text: '' }])
-            assistantMsgAdded = true
-          }
-          terminalReply += text
-          setMessages(prev => {
-            const next = [...prev]
-            next[next.length - 1] = { role: 'assistant', text: terminalReply }
-            return next
-          })
-        } else if (type === 'status') {
-          setMessages(prev => [...prev, { role: 'system', text }])
-        } else if (type === 'question') {
-          setMessages(prev => [...prev, { role: 'system', text }])
-          terminalReply += text
-        } else if (type === 'error') {
-          setMessages(prev => [...prev, { role: 'system', text: `错误：${text}` }])
-        }
-      }
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop()
-        for (const line of lines) processLine(line)
-      }
-      for (const line of buffer.split('\n')) processLine(line)
-
-      if (terminalReply) {
-        setHistory(prev => [
-          ...prev,
-          { role: 'user', content: text },
-          { role: 'assistant', content: terminalReply },
-        ])
-      }
-      onDone()
-    } catch (e) {
-      const msg = e.message || '生成失败'
-      onReject(msg)
-      setMessages(prev => [...prev, { role: 'system', text: `错误：${msg}` }])
-    }
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
     }
   }
 
   return (
     <div className="plan-terminal">
       <div className="plan-terminal-header">
-        <span>计划终端</span>
+        <span>文档生成</span>
         <button
           type="button"
           className="plan-bg-btn"
@@ -180,18 +172,29 @@ function PlanTerminalChat({ userProfile, onProfileSave, planStatus, onGenerate, 
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={planStatus === 'generating' ? '生成中...' : '输入指令...'}
+          placeholder={planStatus === 'generating' ? '生成中...' : '输入主题，如：Python 异步编程'}
           disabled={planStatus === 'generating'}
           autoComplete="off"
           spellCheck={false}
         />
       </div>
+
       <div className="plan-terminal-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`plan-msg-${msg.role}`}>{msg.text}</div>
         ))}
+        {planStatus === 'generating' && (
+          <div className="plan-msg-system">
+            <span className="doc-gen-spinner" style={{ marginRight: 6 }} />
+            处理中...
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
+
+      {humanPayload && (
+        <HumanReviewModal payload={humanPayload} onDecide={handleHumanDecide} />
+      )}
     </div>
   )
 }

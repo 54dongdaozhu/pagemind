@@ -16,6 +16,7 @@ env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/${{ github.repository }}-backend
   FRONTEND_IMAGE: ghcr.io/${{ github.repository }}-frontend
+  MULTI_AGENTS_IMAGE: ghcr.io/${{ github.repository }}-multi-agents
 
 jobs:
   publish:
@@ -31,6 +32,9 @@ jobs:
           - service: frontend
             context: ./services/frontend
             image: ghcr.io/${{ github.repository }}-frontend
+          - service: multi-agents
+            context: ./services/multi-agents
+            image: ghcr.io/${{ github.repository }}-multi-agents
     steps:
       - name: Checkout
         uses: actions/checkout@v4

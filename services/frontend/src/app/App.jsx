@@ -17,6 +17,7 @@ import {
 import KnowledgePanel from '../features/knowledge/components/KnowledgePanel'
 import { useKnowledgeExtraction } from '../features/knowledge/hooks/useKnowledgeExtraction'
 import { useKnowledgeStatus } from '../features/knowledge/hooks/useKnowledgeStatus'
+import DocGenPage from '../features/doc-gen/DocGenPage'
 import PlanPage from '../features/plan/PlanPage'
 import ProfilePage from '../features/profile/ProfilePage'
 import SidebarHeader from '../features/toc/components/SidebarHeader'
@@ -681,7 +682,9 @@ function App() {
           onLogout={handleLogout}
         />
       ) : mode === 'plan' ? (
-        <PlanPage userProfile={userProfile} profileLoaded={profileLoaded} onProfileSave={setUserProfile} />
+        <PlanPage userProfile={userProfile} profileLoaded={profileLoaded} onProfileSave={setUserProfile} userId={currentUser?.user_id} />
+      ) : mode === 'docgen' ? (
+        <DocGenPage user={currentUser} userProfile={userProfile} />
       ) : (
         <div className="blank-mode-page">补全模式（开发中）</div>
       )}

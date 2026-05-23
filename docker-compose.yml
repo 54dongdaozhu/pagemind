@@ -97,6 +97,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      multi-agents:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -113,6 +115,31 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  multi-agents:
+    build:
+      context: ./services/multi-agents
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose:
+      - "8001"
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      BACKEND_URL: http://backend:8000
+      DOC_GEN_WORD_DIR: /tmp/doc-gen
+    volumes:
+      - doc-gen-files:/tmp/doc-gen
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
   certbot:
     image: certbot/certbot:latest
     volumes:
@@ -127,3 +154,4 @@ volumes:
   redis-data:
   certbot-webroot:
   certbot-certs:
+  doc-gen-files:

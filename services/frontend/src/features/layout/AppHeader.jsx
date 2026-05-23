@@ -4,6 +4,7 @@ import { ACCEPTED_DOCUMENT_TYPES } from '../document/documentParser'
 const MODES = [
   { key: 'plan',     label: '计划模式' },
   { key: 'normal',   label: '普通模式' },
+  { key: 'docgen',   label: '文档生成' },
   { key: 'complete', label: '补全模式' },
 ]
 
