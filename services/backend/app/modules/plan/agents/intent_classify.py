@@ -6,7 +6,7 @@ from app.shared.llm import call_deepseek
 logger = logging.getLogger(__name__)
 
 _INTENT_PROMPT = """\
-你是一个意图分类器。根据用户的消息和对话历史，判断用户的意图。
+你是面向技术自学者的意图分类器。根据用户的消息和对话历史，判断用户的意图。
 
 用户画像：
 identity: {identity}
@@ -18,22 +18,19 @@ purpose: {purpose}
 用户当前消息：{message}
 
 请返回 JSON，字段：
-- intent: 只能是 "need_info"（需要更多用户信息）、"gen_plan"（生成学习计划/技能树）、\
-"gen_doc"（生成教学文档）、"qa"（问答/答疑）之一
+- intent: 只能是 "need_info"（需要更多用户信息）、"gen_plan"（生成学习计划/技能树）、"qa"（问答/答疑）之一
 - reason: 简短说明
 
 意图判断参考：
 - 用户提到"计划"、"路线图"、"技能树"、"怎么学"、"学习路径"、"规划" → gen_plan
-- 用户提到"讲解"、"教我"、"文档"、"详细介绍"、"写一篇"、"介绍一下" → gen_doc
-- 用户提问某个概念、原理、区别、用法 → qa
+- 用户提到"讲解"、"教我"、"文档"、"详细介绍"、"写一篇"、"介绍一下"，或提问某个概念、原理、区别、用法 → qa
 - 信息不足以理解用户目标时 → need_info
 
 仅返回 JSON。"""
 
 _FALLBACK_KEYWORDS: dict[str, list[str]] = {
     "gen_plan": ["计划", "路线", "技能树", "怎么学", "学习路径", "规划"],
-    "gen_doc": ["讲解", "教我", "文档", "详细介绍", "写一篇", "介绍一下"],
-    "qa": ["是什么", "为什么", "区别", "原理", "如何"],
+    "qa": ["讲解", "教我", "文档", "详细介绍", "写一篇", "介绍一下", "是什么", "为什么", "区别", "原理", "如何"],
 }
 
 
@@ -66,7 +63,7 @@ def classify_intent(message: str, history: list[dict], profile: dict | None) -> 
         )
         parsed = json.loads(raw)
         intent = parsed.get("intent", "")
-        if intent in ("need_info", "gen_plan", "gen_doc", "qa"):
+        if intent in ("need_info", "gen_plan", "qa"):
             return intent
         logger.warning("Intent classify returned unknown value: %s", intent)
     except Exception as e:

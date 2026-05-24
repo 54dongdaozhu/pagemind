@@ -5,7 +5,6 @@ from collections.abc import Generator
 from app.modules.plan.agents.info_collector import collect_info
 from app.modules.plan.agents.intent_classify import classify_intent
 from app.modules.plan.agents.plan_gen import generate_plan
-from app.modules.plan.agents.doc_gen import generate_doc
 from app.modules.plan.agents.profile_check import check_profile
 from app.modules.plan.agents.qa_answer import answer_qa
 from app.modules.plan.agents.research import research
@@ -35,9 +34,6 @@ def stream_plan_agent(
         "research_context": "",
         "generated_content": "",
         "question_to_user": None,
-        "doc_draft": "",
-        "doc_iterations": 0,
-        "doc_quality_ok": False,
         "stop_reason": "",
     }
 
@@ -59,12 +55,9 @@ def stream_plan_agent(
         yield _encode("question", "请问您能更具体地描述您想学习或了解的内容吗？")
         return
 
-    if intent in ("gen_plan", "gen_doc"):
+    if intent == "gen_plan":
         yield from research(state)
-        if intent == "gen_plan":
-            yield from generate_plan(state)
-        else:
-            yield from generate_doc(state)
+        yield from generate_plan(state)
         yield _encode("terminal", "内容已生成，请查看左侧面板。")
     else:
         yield from answer_qa(state)

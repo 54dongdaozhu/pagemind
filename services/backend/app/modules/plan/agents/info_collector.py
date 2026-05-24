@@ -2,8 +2,8 @@ import json
 from collections.abc import Generator
 
 _FIELD_QUESTIONS: dict[str, str] = {
-    "identity": "请问你目前的身份是什么？（如：在校学生、软件工程师、产品经理等）",
-    "purpose": "请问你学习这个的主要目的是什么？（如：换工作、提升技能、做项目等）",
+    "identity": "请问你目前的技术背景是什么？（如：软件工程师、转行开发者、产品经理转技术等）",
+    "purpose": "请问你学习这个的主要目的是什么？（如：换工作、提升工程能力、做项目等）",
 }
 
 

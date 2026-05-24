@@ -14,8 +14,4 @@ class PlanConvState(TypedDict):
 
     question_to_user: str | None
 
-    doc_draft: str
-    doc_iterations: int
-    doc_quality_ok: bool
-
     stop_reason: str

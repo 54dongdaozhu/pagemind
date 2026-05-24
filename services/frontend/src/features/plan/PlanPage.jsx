@@ -79,7 +79,7 @@ function PlanContentArea({ plan, onReset, onSaveSnapshot }) {
       )}
       {saveError && <div className="plan-save-error">{saveError}</div>}
       {status === 'idle' && (
-        <p className="plan-content-hint">在右侧终端输入主题生成教学文档</p>
+        <p className="plan-content-hint">在右侧终端输入主题生成技术学习材料</p>
       )}
       {status === 'generating' && !content && (
         <p className="plan-content-hint">生成中...</p>
