@@ -13,7 +13,7 @@ from app.shared.llm import call_deepseek
 
 logger = logging.getLogger(__name__)
 
-_DOC_TYPE_VALUES = {"教材", "论文", "讲义", "技术文档", "试卷", "报告", "其他"}
+_DOC_TYPE_VALUES = {"教程", "论文", "课程材料", "技术文档", "项目文档", "报告", "其他"}
 _CONFIDENCE_RETRY_THRESHOLD = 0.6
 _MAX_RETRY = 2
 

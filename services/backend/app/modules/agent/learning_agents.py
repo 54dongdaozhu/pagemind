@@ -4,16 +4,17 @@ import time
 
 from app.modules.agent.advanced_agents import (
     document_structure_agent,
-    grading_agent,
-    practice_agent,
     reflection_agent,
     relation_mapping_agent,
 )
+from app.modules.agent.memory import SUMMARIZE_THRESHOLD, get_agent_memory, summarize_and_patch
 from app.modules.agent.prompts import FALLBACK_PROMPT, SUPERVISOR_PROMPT, SYNTHESIS_PROMPT, TUTOR_PROMPT
 from app.modules.agent.state import Intent, LearningAgentState
 from app.modules.agent.tool_registry import call_tool, list_tools
-from app.modules.agent.utils import safe_parse_json
+from app.modules.agent.utils import format_history, safe_parse_json, sanitize_history
+from app.modules.profile.service import get_profile
 from app.shared import db_log
+from app.shared.job_queue import enqueue_job
 from app.shared.llm import call_deepseek, call_deepseek_stream
 
 
@@ -23,8 +24,6 @@ STREAM_DONE_MARKER = "\n[STREAM_DONE]\n"
 
 # intent → 对应的专项 agent 函数（复杂 agent，内部调工具而非直接调 LLM 流）
 _COMPLEX_AGENT_MAP = {
-    "practice": practice_agent,
-    "grade": grading_agent,
     "relation": relation_mapping_agent,
     "structure": document_structure_agent,
     "review": reflection_agent,
@@ -32,8 +31,6 @@ _COMPLEX_AGENT_MAP = {
 
 # 复杂 agent 在等待 LLM 响应期间立刻向用户展示的状态提示
 _COMPLEX_AGENT_STATUS = {
-    "practice": "正在根据文档内容生成练习题...\n\n",
-    "grade": "正在批改答案...\n\n",
     "relation": "正在分析知识点之间的关系...\n\n",
     "structure": "正在解析文档结构...\n\n",
     "review": "正在生成复习计划...\n\n",
@@ -63,7 +60,7 @@ def supervisor_agent(message: str, doc_id: str | None, history: list[dict[str, s
         intent = parsed.get("intent", "qa")
         if intent not in [
             "qa", "explain", "summarize", "compare",
-            "practice", "grade", "relation", "structure", "review", "unknown",
+            "relation", "structure", "review", "unknown",
         ]:
             intent = "qa"
         return {
@@ -160,9 +157,11 @@ def tutor_agent(state: LearningAgentState) -> dict:
         }
     context = _format_context(state["sources"])
     history = _format_history(state.get("history", []))
+    profile_ctx = _format_profile_context(state.get("profile"))
+    memory_ctx = f"【历史对话摘要（较早对话的压缩记忆）】\n{state['memory_summary']}\n\n" if state.get("memory_summary") else ""
     messages = [
         {"role": "system", "content": TUTOR_PROMPT},
-        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
+        {"role": "user", "content": f"{profile_ctx}{memory_ctx}【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
     ]
     return {
         "answer": call_deepseek(messages, temperature=0.25, purpose="tutor"),
@@ -180,9 +179,11 @@ def synthesis_agent(state: LearningAgentState) -> dict:
         }
     context = _format_context(state["sources"])
     history = _format_history(state.get("history", []))
+    profile_ctx = _format_profile_context(state.get("profile"))
+    memory_ctx = f"【历史对话摘要（较早对话的压缩记忆）】\n{state['memory_summary']}\n\n" if state.get("memory_summary") else ""
     messages = [
         {"role": "system", "content": SYNTHESIS_PROMPT},
-        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
+        {"role": "user", "content": f"{profile_ctx}{memory_ctx}【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
     ]
     return {
         "answer": call_deepseek(messages, temperature=0.2, purpose="synthesis"),
@@ -199,6 +200,8 @@ def _init_state(
     message: str,
     decision: dict,
     history: list[dict[str, str]] | None = None,
+    profile: dict | None = None,
+    memory_summary: str | None = None,
 ) -> LearningAgentState:
     return {
         "user_id": user_id,
@@ -213,6 +216,8 @@ def _init_state(
         "tools_used": ["SupervisorAgent"],
         "active_agent": "SupervisorAgent",
         "stop_reason": "started",
+        "profile": profile,
+        "memory_summary": memory_summary,
     }
 
 
@@ -261,18 +266,26 @@ def _build_llm_messages(state: LearningAgentState) -> tuple[list, float]:
     """为流式路径构建最终 LLM 消息，返回 (messages, temperature)。"""
     context = _format_context(state["sources"])
     history = _format_history(state.get("history", []))
+    profile_ctx = _format_profile_context(state.get("profile"))
+    memory_ctx = f"【历史对话摘要（较早对话的压缩记忆）】\n{state['memory_summary']}\n\n" if state.get("memory_summary") else ""
     if state["intent"] in ["summarize", "compare"]:
         return [
             {"role": "system", "content": SYNTHESIS_PROMPT},
-            {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
+            {"role": "user", "content": f"{profile_ctx}{memory_ctx}【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户请求】\n{state['query'] or state['message']}"},
         ], 0.2
     return [
         {"role": "system", "content": TUTOR_PROMPT},
-        {"role": "user", "content": f"【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
+        {"role": "user", "content": f"{profile_ctx}{memory_ctx}【文档摘要】\n{state['summary'] or '无'}\n\n【相关片段】\n{context}\n\n【最近对话（真实历史，不是示例）】\n{history}\n\n【当前用户问题】\n{state['query'] or state['message']}"},
     ], 0.25
 
 
 # ── 公共编排入口 ───────────────────────────────────────────────────────────────
+
+def _fire_summarize(user_id: str, history: list) -> None:
+    if not enqueue_job(summarize_and_patch, user_id, history):
+        import threading
+        threading.Thread(target=summarize_and_patch, args=(user_id, history), daemon=True).start()
+
 
 def run_learning_agents(
     user_id: str,
@@ -281,6 +294,10 @@ def run_learning_agents(
     history: list[dict[str, str]] | None = None,
 ) -> LearningAgentState:
     history = _sanitize_history(history or [])
+    profile = get_profile(user_id)
+    agent_mem = get_agent_memory(user_id)
+    memory_summary = (agent_mem or {}).get("summary")
+
     run_id = db_log.create_workflow_run(
         workflow_type="agent_chat",
         user_id=user_id, doc_id=doc_id,
@@ -290,7 +307,8 @@ def run_learning_agents(
     success, error_info, state, start = True, None, None, time.monotonic()
     try:
         decision = _log_supervisor(message, doc_id, run_id, history=history)
-        state = _init_state(user_id, doc_id, message, decision, history=history)
+        state = _init_state(user_id, doc_id, message, decision, history=history,
+                            profile=profile, memory_summary=memory_summary)
 
         if state["intent"] == "unknown" and not doc_id:
             state.update({
@@ -329,6 +347,8 @@ def run_learning_agents(
             )
 
         state["tools_used"] = _dedupe_tools(state["tools_used"])
+        if len(history) >= SUMMARIZE_THRESHOLD:
+            _fire_summarize(user_id, history)
         return state
     except Exception as e:
         success, error_info = False, {"error": str(e)}
@@ -353,6 +373,10 @@ def stream_learning_agents(
     history: list[dict[str, str]] | None = None,
 ):
     history = _sanitize_history(history or [])
+    profile = get_profile(user_id)
+    agent_mem = get_agent_memory(user_id)
+    memory_summary = (agent_mem or {}).get("summary")
+
     run_id = db_log.create_workflow_run(
         workflow_type="agent_chat_stream",
         user_id=user_id, doc_id=doc_id,
@@ -362,7 +386,8 @@ def stream_learning_agents(
     success, error_info, state, start = True, None, None, time.monotonic()
     try:
         decision = _log_supervisor(message, doc_id, run_id, history=history)
-        state = _init_state(user_id, doc_id, message, decision, history=history)
+        state = _init_state(user_id, doc_id, message, decision, history=history,
+                            profile=profile, memory_summary=memory_summary)
 
         if state["intent"] == "unknown" and not doc_id:
             answer_parts = []
@@ -427,6 +452,8 @@ def stream_learning_agents(
             state["tools_used"] = _dedupe_tools(state["tools_used"])
             _log_stream_qa(state, start)
             yield _format_stream_metadata(state)
+            if len(history) >= SUMMARIZE_THRESHOLD:
+                _fire_summarize(user_id, history)
         except Exception as e:
             final_ok, final_err = False, {"error": str(e)}
             raise
@@ -474,19 +501,13 @@ def _heuristic_supervisor(message: str) -> dict:
     summarize_keywords = ["总结", "概括", "提炼", "笔记", "要点", "结构"]
     compare_keywords = ["比较", "区别", "联系", "相同", "不同"]
     explain_keywords = ["解释", "讲讲", "什么意思", "是什么", "为什么", "如何理解"]
-    practice_keywords = ["出题", "练习", "自测", "测试", "巩固", "复述"]
-    grade_keywords = ["批改", "评分", "对不对", "是否正确", "错因"]
     relation_keywords = ["关系", "图谱", "前置", "依赖", "关联"]
     structure_keywords = ["结构", "目录", "层级", "脉络", "框架"]
     review_keywords = ["复习", "计划", "下一步", "薄弱", "安排"]
 
     intent = "qa"
     active_agent = "RetrievalAgent"
-    if any(k in text for k in practice_keywords):
-        intent, active_agent = "practice", "PracticeAgent"
-    elif any(k in text for k in grade_keywords):
-        intent, active_agent = "grade", "PracticeAgent"
-    elif any(k in text for k in relation_keywords):
+    if any(k in text for k in relation_keywords):
         intent, active_agent = "relation", "RelationMappingAgent"
     elif any(k in text for k in review_keywords):
         intent, active_agent = "review", "ReflectionAgent"
@@ -542,33 +563,28 @@ def _source_to_dict(source) -> dict:
     }
 
 
-def _sanitize_history(history) -> list[dict[str, str]]:
-    cleaned = []
-    for item in history[-20:]:
-        if isinstance(item, dict):
-            role = item.get("role")
-            content = item.get("content")
-        else:
-            role = getattr(item, "role", None)
-            content = getattr(item, "content", None)
-        if role not in {"user", "assistant"} or not isinstance(content, str):
-            continue
-        content = content.strip()
-        if not content:
-            continue
-        cleaned.append({"role": role, "content": content[:800]})
-    total = sum(len(m["content"]) for m in cleaned)
-    while total > 4000 and cleaned:
-        total -= len(cleaned.pop(0)["content"])
-    return cleaned
+_sanitize_history = sanitize_history
+_format_history = format_history
 
 
-def _format_history(history: list[dict[str, str]]) -> str:
-    history = _sanitize_history(history)
-    if not history:
-        return "无"
-    role_names = {"user": "用户", "assistant": "助手"}
-    return "\n".join(f"{role_names[item['role']]}：{item['content']}" for item in history)
+def _format_profile_context(profile: dict | None) -> str:
+    if not profile:
+        return ""
+    lines = ["【用户画像】"]
+    for key, label in [
+        ("identity", "身份"),
+        ("skill_level", "技术水平"),
+        ("learning_style", "学习风格"),
+        ("depth_preference", "深度偏好"),
+        ("urgency", "学习节奏"),
+    ]:
+        if v := profile.get(key):
+            lines.append(f"{label}：{v}")
+    if ts := profile.get("tech_stack"):
+        lines.append(f"已掌握技术：{', '.join(ts)}")
+    if df := profile.get("domain_focus"):
+        lines.append(f"关注领域：{', '.join(df)}")
+    return "\n".join(lines) + "\n\n" if len(lines) > 1 else ""
 
 
 def _format_supervisor_input(message: str, history: list[dict[str, str]]) -> str:

@@ -4,9 +4,7 @@ from typing import Any
 
 from app.modules.agent.knowledge_agents import discover_knowledge_points
 from app.modules.agent.prompts import (
-    ANSWER_GRADING_PROMPT,
     DOCUMENT_STRUCTURE_PROMPT,
-    PRACTICE_GENERATION_PROMPT,
     RELATION_MAPPING_PROMPT,
     REVIEW_SCHEDULE_PROMPT,
 )
@@ -86,39 +84,6 @@ def _extract_document_structure(text: str):
     return ensure_keys(
         safe_parse_json(call_deepseek(messages, temperature=0.2, json_mode=True, purpose="tool.structure")),
         {"title": "", "summary": "", "sections": [], "suggested_order": []},
-    )
-
-
-def _generate_practice(
-    context: str,
-    question_count: int = 5,
-    difficulty: str = "medium",
-    practice_type: str = "mixed",
-):
-    question_count = max(1, min(int(question_count), 10))
-    messages = [
-        {"role": "system", "content": PRACTICE_GENERATION_PROMPT},
-        {"role": "user", "content": (
-            f"练习数量：{question_count}\n难度：{difficulty}\n练习类型：{practice_type}\n\n"
-            f"【文档内容】\n{context}"
-        )},
-    ]
-    return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.25, json_mode=True, purpose="tool.practice")),
-        {"items": []},
-    )
-
-
-def _grade_answer(question: str, user_answer: str, reference_context: str):
-    messages = [
-        {"role": "system", "content": ANSWER_GRADING_PROMPT},
-        {"role": "user", "content": (
-            f"【题目】\n{question}\n\n【用户答案】\n{user_answer}\n\n【文档依据】\n{reference_context}"
-        )},
-    ]
-    return ensure_keys(
-        safe_parse_json(call_deepseek(messages, temperature=0.1, json_mode=True, purpose="tool.grade")),
-        {"score": 0, "is_correct": False, "feedback": "", "missing_points": [], "review_targets": []},
     )
 
 
@@ -215,7 +180,7 @@ TOOL_REGISTRY: dict[str, AgentTool] = {
             "reply": {"type": "string", "description": "基于文档生成的回答。"},
             "sources": {"type": "array", "description": "回答使用的文档片段。"},
         },
-        when_to_use="当用户问题是普通文档问答，且不需要额外教学拆解或结构化总结时使用。",
+        when_to_use="当用户问题是普通文档问答，且不需要额外理解拆解或结构化总结时使用。",
         constraints=["回答必须受限于当前文档上下文。", "复杂学习任务优先拆成检索和 Tutor/Synthesis。"],
         function=_answer_with_document_context,
     ),
@@ -345,39 +310,6 @@ TOOL_REGISTRY: dict[str, AgentTool] = {
         when_to_use="用户想了解文档结构、章节脉络、学习路线，或 DocumentStructureAgent 初始化文档学习资产时使用。",
         constraints=["输入内容越完整，结构越可靠。", "不要把推断出的结构当成原文标题。"],
         function=_extract_document_structure,
-    ),
-    "generate_practice": AgentTool(
-        name="generate_practice",
-        description="基于文档上下文生成自测题、解释题、应用题、对比题或复述提示。",
-        args_schema={
-            "context": {"type": "string", "description": "生成练习所依据的文档上下文。"},
-            "question_count": {"type": "integer", "description": "练习数量，1 到 10。"},
-            "difficulty": {"type": "string", "description": "难度：easy、medium、hard。"},
-            "practice_type": {"type": "string", "description": "练习类型：mixed、short_answer、application、compare、recall。"},
-        },
-        return_schema={"items": {"type": "array", "description": "练习列表，包含 type、question、reference_answer、target_knowledge、difficulty。"}},
-        when_to_use="用户要求出题、自测、巩固理解、复述训练或应用练习时使用。",
-        constraints=["必须依据给定文档上下文。", "生成的是学习练习，不默认是考试题。"],
-        function=_generate_practice,
-    ),
-    "grade_answer": AgentTool(
-        name="grade_answer",
-        description="基于文档依据批改用户答案，给出得分、反馈、缺失点和复习目标。",
-        args_schema={
-            "question": {"type": "string", "description": "被回答的问题。"},
-            "user_answer": {"type": "string", "description": "用户提交的答案。"},
-            "reference_context": {"type": "string", "description": "用于批改的文档依据。"},
-        },
-        return_schema={
-            "score": {"type": "number", "description": "0 到 1 的评分。"},
-            "is_correct": {"type": "boolean", "description": "是否基本正确。"},
-            "feedback": {"type": "string", "description": "批改反馈。"},
-            "missing_points": {"type": "array", "description": "缺失或错误点。"},
-            "review_targets": {"type": "array", "description": "建议复习目标。"},
-        },
-        when_to_use="用户要求批改答案、判断回答是否正确或分析错因时使用。",
-        constraints=["需要题目、用户答案和文档依据。", "没有文档依据时只能给低置信反馈。"],
-        function=_grade_answer,
     ),
     "map_knowledge_relations": AgentTool(
         name="map_knowledge_relations",

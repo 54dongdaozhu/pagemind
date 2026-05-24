@@ -27,57 +27,6 @@ def document_structure_agent(state: LearningAgentState) -> dict:
     }
 
 
-def practice_agent(state: LearningAgentState) -> dict:
-    context = _context_text(state)
-    try:
-        result = call_tool(
-            "generate_practice",
-            context=context,
-            question_count=5,
-            difficulty="medium",
-            practice_type="mixed",
-        )
-    except Exception as exc:
-        logger.exception("[PracticeAgent] generate_practice failed: %s", exc)
-        return {
-            "answer": "练习题生成暂时不可用，请稍后重试。",
-            "active_agent": "PracticeAgent",
-            "tools_used": [*state["tools_used"], "generate_practice"],
-            "stop_reason": "tool_error",
-        }
-    return {
-        "answer": _format_practice_answer(result),
-        "active_agent": "PracticeAgent",
-        "tools_used": [*state["tools_used"], "generate_practice"],
-        "stop_reason": "answered",
-    }
-
-
-def grading_agent(state: LearningAgentState) -> dict:
-    context = _context_text(state)
-    try:
-        result = call_tool(
-            "grade_answer",
-            question=state["query"],
-            user_answer=state["message"],
-            reference_context=context,
-        )
-    except Exception as exc:
-        logger.exception("[GradingAgent] grade_answer failed: %s", exc)
-        return {
-            "answer": "答案批改暂时不可用，请稍后重试。",
-            "active_agent": "PracticeAgent",
-            "tools_used": [*state["tools_used"], "grade_answer"],
-            "stop_reason": "tool_error",
-        }
-    return {
-        "answer": _format_grading_answer(result),
-        "active_agent": "PracticeAgent",
-        "tools_used": [*state["tools_used"], "grade_answer"],
-        "stop_reason": "answered",
-    }
-
-
 def relation_mapping_agent(state: LearningAgentState) -> dict:
     context = _context_text(state)
     try:
@@ -157,34 +106,6 @@ def _format_structure_answer(result: dict) -> str:
     if order:
         lines.append("建议学习顺序：" + " -> ".join(order))
     return "\n".join(lines)
-
-
-def _format_practice_answer(result: dict) -> str:
-    items = result.get("items") or []
-    if not items:
-        return "这段内容暂时不适合生成练习。"
-    lines = ["下面是基于当前文档生成的练习："]
-    for idx, item in enumerate(items, start=1):
-        question = item.get("question", "")
-        answer = item.get("reference_answer", "")
-        difficulty = item.get("difficulty", "medium")
-        lines.append(f"{idx}. [{difficulty}] {question}")
-        if answer:
-            lines.append(f"参考答案：{answer}")
-    return "\n".join(lines)
-
-
-def _format_grading_answer(result: dict) -> str:
-    score = result.get("score", 0)
-    feedback = result.get("feedback", "")
-    missing = result.get("missing_points") or []
-    review = result.get("review_targets") or []
-    lines = [f"评分：{score}", feedback]
-    if missing:
-        lines.append("缺失或需要修正：" + "、".join(missing))
-    if review:
-        lines.append("建议复习：" + "、".join(review))
-    return "\n".join(line for line in lines if line)
 
 
 def _format_relation_answer(result: dict) -> str:

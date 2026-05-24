@@ -30,8 +30,6 @@ Intent = Literal[
     "explain",
     "summarize",
     "compare",
-    "practice",
-    "grade",
     "relation",
     "structure",
     "review",
@@ -39,7 +37,7 @@ Intent = Literal[
 ]
 
 
-class LearningAgentState(TypedDict):
+class _LearningAgentStateBase(TypedDict):
     user_id: str
     doc_id: str | None
     message: str
@@ -52,3 +50,8 @@ class LearningAgentState(TypedDict):
     tools_used: list[str]
     active_agent: str
     stop_reason: str
+
+
+class LearningAgentState(_LearningAgentStateBase, total=False):
+    profile: dict | None
+    memory_summary: str | None
