@@ -228,16 +228,24 @@ function ChatPanel({ docId, docLoaded, ragReady, ragError, messages, setMessages
       <div className="chat-input-row">
         <textarea
           className="chat-input"
-          rows={2}
+          rows={3}
           placeholder="输入消息，Enter 发送"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={loading || !docLoaded || !ragReady || Boolean(ragError)}
         />
-        <button className="chat-send-btn" onClick={send} disabled={loading || !docLoaded || !ragReady || Boolean(ragError) || !input.trim()}>
-          发送
-        </button>
+        <div className="chat-input-actions">
+          <button
+            className="chat-send-btn"
+            onClick={send}
+            disabled={loading || !docLoaded || !ragReady || Boolean(ragError) || !input.trim()}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   )
