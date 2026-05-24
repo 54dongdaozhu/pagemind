@@ -12,6 +12,7 @@ from app.modules.assets import router as assets_router
 from app.modules.auth import router as auth_router
 from app.modules.explain import router as explain_router
 from app.modules.extraction import router as extraction_router
+from app.modules.generated_documents import router as generated_documents_router
 from app.modules.health import router as health_router
 from app.modules.knowledge import router as knowledge_router
 from app.modules.observability import router as obs_router
@@ -70,6 +71,7 @@ def create_app():
     _fast_api.include_router(agent_router.router, dependencies=protected)
     _fast_api.include_router(extraction_router.router, dependencies=protected)
     _fast_api.include_router(explain_router.router, dependencies=protected)
+    _fast_api.include_router(generated_documents_router.router, dependencies=protected)
     _fast_api.include_router(knowledge_router.router, dependencies=protected)
     _fast_api.include_router(plan_router.router, dependencies=protected)
     _fast_api.include_router(profile_router.router, dependencies=protected)

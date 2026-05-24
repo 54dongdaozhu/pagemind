@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { getWordDownloadUrl, resumeDocGen, startDocGen, streamDocGen } from '../../api/docGen'
+import { deleteDocGenTask, getWordDownloadUrl, resumeDocGen, startDocGen, streamDocGen } from '../../api/docGen'
 import { analyzeProfile } from '../../api/profile'
 import HumanReviewModal from '../doc-gen/HumanReviewModal'
 
@@ -12,11 +12,14 @@ const AGENT_LABELS = {
   publisher: '发布',
 }
 
-function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGenerate, onHtmlReady, onDone, onReject }) {
+const READY_MESSAGE = '已加载用户画像，生成模块准备就绪。'
+
+function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGenerate, onHtmlReady, onDone, onReject, onReset }) {
   const [messages, setMessages] = useState([
-    { role: 'system', text: '已加载用户画像，文档生成模块准备就绪。' },
+    { role: 'system', text: READY_MESSAGE },
   ])
   const [input, setInput] = useState('')
+  const [requirements, setRequirements] = useState('')
   const [showProfile, setShowProfile] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
@@ -61,10 +64,12 @@ function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGe
     if (!text || planStatus === 'generating') return
     addMsg('user', text)
     setInput('')
+    const requestText = requirements.trim()
+    setRequirements('')
     onGenerate()
 
     try {
-      const { task_id } = await startDocGen(text, '', userId || 'anonymous', userProfile)
+      const { task_id } = await startDocGen(text, requestText, userId || 'anonymous', userProfile)
       setTaskId(task_id)
       _startStream(task_id)
     } catch (e) {
@@ -84,6 +89,15 @@ function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGe
       onReject(e.message)
       addMsg('system', `Resume 失败：${e.message}`)
     }
+  }
+
+  function handleReset() {
+    stopStreamRef.current?.()
+    if (taskId) deleteDocGenTask(taskId).catch(() => {})
+    setTaskId(null)
+    setHumanPayload(null)
+    setMessages([{ role: 'system', text: READY_MESSAGE }])
+    onReset()
   }
 
   function handleKeyDown(e) {
@@ -115,14 +129,21 @@ function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGe
   return (
     <div className="plan-terminal">
       <div className="plan-terminal-header">
-        <span>文档生成</span>
-        <button
-          type="button"
-          className="plan-bg-btn"
-          onClick={() => { setShowProfile(v => !v); setEditing(false) }}
-        >
-          背景信息
-        </button>
+        <span>计划模式</span>
+        <div className="plan-terminal-header-actions">
+          {(planStatus === 'ready' || planStatus === 'error') && (
+            <button type="button" className="plan-bg-btn" onClick={handleReset}>
+              重新生成
+            </button>
+          )}
+          <button
+            type="button"
+            className="plan-bg-btn"
+            onClick={() => { setShowProfile(v => !v); setEditing(false) }}
+          >
+            背景信息
+          </button>
+        </div>
       </div>
 
       {showProfile && (
@@ -164,19 +185,37 @@ function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGe
         )
       )}
 
-      <div className="plan-terminal-input-row">
-        <span className="plan-terminal-prompt">›</span>
-        <input
-          className="plan-terminal-input"
-          type="text"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={planStatus === 'generating' ? '生成中...' : '输入主题，如：Python 异步编程'}
+      <div className="plan-terminal-compose">
+        <div className="plan-terminal-input-row">
+          <span className="plan-terminal-prompt">›</span>
+          <input
+            className="plan-terminal-input"
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={planStatus === 'generating' ? '生成中...' : '输入主题，如：Python 异步编程'}
+            disabled={planStatus === 'generating'}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <textarea
+          className="plan-terminal-requirements"
+          value={requirements}
+          onChange={e => setRequirements(e.target.value)}
+          placeholder="要求（可选），如：面向初学者，重点讲实践应用"
+          rows={3}
           disabled={planStatus === 'generating'}
-          autoComplete="off"
-          spellCheck={false}
         />
+        <button
+          type="button"
+          className="plan-terminal-submit"
+          onClick={handleSend}
+          disabled={planStatus === 'generating' || !input.trim()}
+        >
+          开始生成
+        </button>
       </div>
 
       <div className="plan-terminal-messages">

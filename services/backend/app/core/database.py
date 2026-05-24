@@ -79,6 +79,24 @@ class DocumentVersion(Base):
     )
 
 
+class GeneratedDocument(Base):
+    __tablename__ = "generated_documents"
+
+    generated_doc_id = Column(Text, primary_key=True)
+    user_id = Column(String(64), ForeignKey("users.user_id"), nullable=False, index=True)
+    source_task_id = Column(String(64), nullable=True, index=True)
+    title = Column(Text, nullable=False)
+    topic = Column(Text, nullable=False)
+    requirements = Column(Text, nullable=False, default="")
+    html_snapshot = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "source_task_id", name="uq_generated_doc_user_task"),
+    )
+
+
 class Chunk(Base):
     __tablename__ = "chunks"
 

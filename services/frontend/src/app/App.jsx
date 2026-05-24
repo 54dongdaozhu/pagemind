@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { fetchCurrentUser, logoutUser } from '../api/auth'
+import { fetchGeneratedDocument, fetchGeneratedDocuments } from '../api/generatedDocuments'
 import { fetchMyProfile } from '../api/profile'
 import { fetchRagDocumentRender, fetchRagDocuments, indexRagDocument } from '../api/rag'
 import AuthScreen from '../features/auth/AuthScreen'
@@ -17,7 +18,6 @@ import {
 import KnowledgePanel from '../features/knowledge/components/KnowledgePanel'
 import { useKnowledgeExtraction } from '../features/knowledge/hooks/useKnowledgeExtraction'
 import { useKnowledgeStatus } from '../features/knowledge/hooks/useKnowledgeStatus'
-import DocGenPage from '../features/doc-gen/DocGenPage'
 import PlanPage from '../features/plan/PlanPage'
 import ProfilePage from '../features/profile/ProfilePage'
 import SidebarHeader from '../features/toc/components/SidebarHeader'
@@ -42,6 +42,12 @@ function App() {
   const [persistedDocuments, setPersistedDocuments] = useState([])
   const [persistedDocumentsLoading, setPersistedDocumentsLoading] = useState(false)
   const [persistedDocumentsError, setPersistedDocumentsError] = useState('')
+  const [generatedDocuments, setGeneratedDocuments] = useState([])
+  const [generatedDocumentsLoading, setGeneratedDocumentsLoading] = useState(false)
+  const [generatedDocumentsError, setGeneratedDocumentsError] = useState('')
+  const [generatedDocumentPreview, setGeneratedDocumentPreview] = useState(null)
+  const [generatedDocumentPreviewLoading, setGeneratedDocumentPreviewLoading] = useState(false)
+  const [generatedDocumentPreviewError, setGeneratedDocumentPreviewError] = useState('')
   const [activeDocId, setActiveDocId] = useState('')
   const [documentRenderToken, setDocumentRenderToken] = useState(0)
   const [ragReadyDocIds, setRagReadyDocIds] = useState(() => new Set())
@@ -93,6 +99,43 @@ function App() {
       .then(p => { if (p) setUserProfile(p) })
       .finally(() => setProfileLoaded(true))
   }, [currentUser])
+
+  const reloadGeneratedDocuments = useCallback(() => {
+    if (!currentUser) return () => {}
+    let active = true
+    setGeneratedDocumentsLoading(true)
+    setGeneratedDocumentsError('')
+    fetchGeneratedDocuments()
+      .then(data => {
+        if (!active) return
+        setGeneratedDocuments((data.documents || []).map(doc => ({
+          id: doc.generated_doc_id,
+          name: doc.title || doc.topic || '生成文档',
+          topic: doc.topic || '',
+          requirements: doc.requirements || '',
+          sourceTaskId: doc.source_task_id || '',
+          createdAt: doc.created_at,
+          updatedAt: doc.updated_at,
+        })))
+      })
+      .catch(err => {
+        console.warn('生成文档列表加载失败:', err)
+        if (active) setGeneratedDocumentsError(err.message || '生成文档加载失败')
+      })
+      .finally(() => {
+        if (active) setGeneratedDocumentsLoading(false)
+      })
+    return () => { active = false }
+  }, [currentUser])
+
+  useEffect(() => {
+    return reloadGeneratedDocuments()
+  }, [reloadGeneratedDocuments])
+
+  useEffect(() => {
+    if (mode !== 'profile') return
+    return reloadGeneratedDocuments()
+  }, [mode, reloadGeneratedDocuments])
 
   useEffect(() => {
     if (!currentUser) return
@@ -396,6 +439,20 @@ function App() {
     setMode('normal')
   }, [documents, persistedDocuments, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
 
+  const handleOpenGeneratedDocument = useCallback(async (generatedDocId) => {
+    setGeneratedDocumentPreviewLoading(true)
+    setGeneratedDocumentPreviewError('')
+    try {
+      const doc = await fetchGeneratedDocument(generatedDocId)
+      setGeneratedDocumentPreview(doc)
+    } catch (err) {
+      console.error('生成文档打开失败:', err)
+      setGeneratedDocumentPreviewError(err.message || '生成文档打开失败')
+    } finally {
+      setGeneratedDocumentPreviewLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (mode !== 'normal' || !highlightResetToken || !docContentRef.current || !docLoaded) return
     clearKnowledgeHighlights(docContentRef.current)
@@ -616,8 +673,7 @@ function App() {
         onModeChange={setMode}
       />
 
-      {mode === 'normal' ? (
-        <>
+      <div className={`mode-pane${mode === 'normal' ? ' active' : ''}`} aria-hidden={mode !== 'normal'}>
           <TocSidebar
             tocOpen={tocOpen}
             width={tocWidth}
@@ -671,23 +727,33 @@ function App() {
             onCardClick={handleKPCardClick}
             onCardDoubleClick={handleKPCardDblClick}
           />
-        </>
-      ) : mode === 'profile' ? (
+      </div>
+
+      <div className={`mode-pane${mode === 'profile' ? ' active' : ''}`} aria-hidden={mode !== 'profile'}>
         <ProfilePage
           user={currentUser}
           documents={persistedDocuments}
           documentsLoading={persistedDocumentsLoading}
           documentsError={persistedDocumentsError}
+          generatedDocuments={generatedDocuments}
+          generatedDocumentsLoading={generatedDocumentsLoading}
+          generatedDocumentsError={generatedDocumentsError}
+          generatedDocumentPreview={generatedDocumentPreview}
+          generatedDocumentPreviewLoading={generatedDocumentPreviewLoading}
+          generatedDocumentPreviewError={generatedDocumentPreviewError}
           onOpenDocument={handleOpenPersistedDocument}
+          onOpenGeneratedDocument={handleOpenGeneratedDocument}
           onLogout={handleLogout}
         />
-      ) : mode === 'plan' ? (
+      </div>
+
+      <div className={`mode-pane${mode === 'plan' ? ' active' : ''}`} aria-hidden={mode !== 'plan'}>
         <PlanPage userProfile={userProfile} profileLoaded={profileLoaded} onProfileSave={setUserProfile} userId={currentUser?.user_id} />
-      ) : mode === 'docgen' ? (
-        <DocGenPage user={currentUser} userProfile={userProfile} />
-      ) : (
+      </div>
+
+      <div className={`mode-pane${mode === 'complete' ? ' active' : ''}`} aria-hidden={mode !== 'complete'}>
         <div className="blank-mode-page">补全模式（开发中）</div>
-      )}
+      </div>
     </div>
   )
 }

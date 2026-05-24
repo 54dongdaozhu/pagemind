@@ -26,7 +26,8 @@ services:
   frontend:
     build:
       target: dev
-    ports:
+    ports: !override
+      - "80:5173"
       - "5173:5173"
     environment:
       CHOKIDAR_USEPOLLING: "true"

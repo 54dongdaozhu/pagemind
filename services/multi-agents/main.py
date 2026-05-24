@@ -3,11 +3,13 @@ import json
 import logging
 import os
 import uuid
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -19,6 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _WORD_DIR = os.getenv("DOC_GEN_WORD_DIR", "/tmp/doc-gen")
+_BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 Path(_WORD_DIR).mkdir(parents=True, exist_ok=True)
 
 # In-memory task registry: task_id → {"state": ..., "queue": asyncio.Queue, "done": bool}
@@ -73,6 +76,36 @@ def _check_interrupted(graph, config: dict) -> tuple[bool, dict]:
     return False, {}
 
 
+def _save_generated_document_snapshot(task_id: str, state: dict) -> None:
+    auth_header = _tasks.get(task_id, {}).get("auth_header", "")
+    html = state.get("html_content", "")
+    if not auth_header or not html:
+        return
+
+    payload = {
+        "source_task_id": task_id,
+        "title": state.get("topic") or "生成文档",
+        "topic": state.get("topic") or "生成文档",
+        "requirements": state.get("requirements") or "",
+        "html_snapshot": html,
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_BACKEND_URL}/api/generated-documents",
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": auth_header,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        logger.warning("Failed to save generated document snapshot task_id=%s: %s", task_id, exc)
+
+
 async def _run_graph(task_id: str, initial_state: dict) -> None:
     from agents.orchestrator import get_graph
 
@@ -115,6 +148,7 @@ async def _run_graph(task_id: str, initial_state: dict) -> None:
         final_state = graph.get_state(config).values
         _tasks[task_id]["status"] = "done"
         _tasks[task_id]["last_state"] = final_state
+        await asyncio.to_thread(_save_generated_document_snapshot, task_id, final_state)
         _emit({
             "type": "complete",
             "html": final_state.get("html_content", ""),
@@ -163,6 +197,7 @@ async def _resume_graph(task_id: str, decision: str, feedback: str) -> None:
         final_state = graph.get_state(config).values
         _tasks[task_id]["status"] = "done"
         _tasks[task_id]["last_state"] = final_state
+        await asyncio.to_thread(_save_generated_document_snapshot, task_id, final_state)
         _emit({
             "type": "complete",
             "html": final_state.get("html_content", ""),
@@ -186,10 +221,16 @@ async def health():
 
 
 @app.post("/api/doc-gen/generate")
-async def generate(req: GenerateRequest):
+async def generate(req: GenerateRequest, request: Request):
     task_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
-    _tasks[task_id] = {"queue": queue, "done": False, "status": "pending", "last_state": {}}
+    _tasks[task_id] = {
+        "queue": queue,
+        "done": False,
+        "status": "pending",
+        "last_state": {},
+        "auth_header": request.headers.get("authorization", ""),
+    }
 
     initial_state = {
         "task_id": task_id,

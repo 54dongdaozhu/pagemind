@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useReducer, useState } from 'react'
 import { analyzeProfile } from '../../api/profile'
 import PlanTerminalChat from './PlanTerminalChat'
 
@@ -20,15 +20,41 @@ function planReducer(state, action) {
 
 // ── 左侧内容区 ────────────────────────────────────────────────────────────────
 
+function buildPreviewDoc(html) {
+  if (/<html[\s>]/i.test(html)) return html
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        box-sizing: border-box;
+        color: #222;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        line-height: 1.7;
+        margin: 0;
+        padding: 24px;
+      }
+      h1 { font-size: 1.9rem; border-bottom: 2px solid #e5e7eb; padding-bottom: .4rem; margin-bottom: 1.2rem; }
+      h2 { font-size: 1.45rem; margin-top: 2rem; color: #1d4ed8; }
+      h3 { font-size: 1.15rem; margin-top: 1.4rem; }
+      p { margin: .7rem 0; }
+      code { background: #f3f4f6; padding: .15em .4em; border-radius: 4px; font-size: .88em; }
+      pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+      pre code { background: none; padding: 0; color: inherit; }
+      blockquote { border-left: 4px solid #3b82f6; padding-left: 1rem; color: #555; margin: 1rem 0; }
+      table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+      th, td { border: 1px solid #d1d5db; padding: .55rem .85rem; }
+      th { background: #f9fafb; font-weight: 600; }
+      ul, ol { padding-left: 1.5rem; margin: .7rem 0; }
+    </style>
+  </head>
+  <body>${html || ''}</body>
+</html>`
+}
+
 function PlanContentArea({ plan, onReset }) {
   const { status, content, isHtml, wordUrl, error } = plan
-  const htmlRef = useRef(null)
-
-  useEffect(() => {
-    if (isHtml && htmlRef.current) {
-      htmlRef.current.innerHTML = content || ''
-    }
-  }, [isHtml, content])
 
   return (
     <div className="plan-content-area">
@@ -44,7 +70,12 @@ function PlanContentArea({ plan, onReset }) {
         <p className="plan-content-hint">生成中...</p>
       )}
       {isHtml ? (
-        <div ref={htmlRef} className="plan-content-text doc-gen-html-content" />
+        <iframe
+          className="plan-content-frame"
+          title="生成文档预览"
+          srcDoc={buildPreviewDoc(content)}
+          sandbox=""
+        />
       ) : (
         (status === 'generating' || status === 'ready') && content && (
           <pre className="plan-content-pre">{content}</pre>
@@ -79,6 +110,7 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
         onHtmlReady={(html, wordUrl) => dispatch({ type: 'RESOLVE_HTML', payload: { html, wordUrl } })}
         onDone={() => dispatch({ type: 'RESOLVE' })}
         onReject={err => dispatch({ type: 'REJECT', payload: err })}
+        onReset={() => dispatch({ type: 'RESET' })}
       />
     </div>
   )
