@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,7 @@ from app.shared.cache import (
 )
 
 security = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 def _b64encode(data: bytes) -> str:
@@ -352,6 +354,12 @@ def login_user(account: str, password: str) -> dict:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="请先验证邮箱后再登录",
             )
+
+    try:
+        from app.modules.profile.service import get_profile
+        get_profile(user.user_id)
+    except Exception:
+        logger.warning("Failed to warm user profile cache for %s", user.user_id, exc_info=True)
 
     return {
         "access_token": create_access_token(user),
