@@ -1,7 +1,9 @@
 import { useRef, useReducer, useState } from 'react'
 import { saveGeneratedDocumentSnapshot } from '../../api/generatedDocuments'
 import { analyzeProfile } from '../../api/profile'
+import PlanActivityBar from './PlanActivityBar'
 import PlanTerminalChat from './PlanTerminalChat'
+import SkillTreePanel from './SkillTreePanel'
 
 // ── 计划内容状态机 ────────────────────────────────────────────────────────────
 
@@ -113,6 +115,7 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
   const [plan, dispatch] = useReducer(planReducer, PLAN_INIT)
   const [generationMeta, setGenerationMeta] = useState({ taskId: '', topic: '', requirements: '' })
   const generationMetaRef = useRef(generationMeta)
+  const [activeView, setActiveView] = useState('content')
 
   function updateGenerationMeta(meta) {
     generationMetaRef.current = meta
@@ -140,11 +143,16 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
 
   return (
     <div className="plan-page-main">
-      <PlanContentArea
-        plan={plan}
-        onReset={() => dispatch({ type: 'RESET' })}
-        onSaveSnapshot={() => saveSnapshot()}
-      />
+      <PlanActivityBar activeView={activeView} onViewChange={setActiveView} />
+      {activeView === 'skill-tree' ? (
+        <SkillTreePanel />
+      ) : (
+        <PlanContentArea
+          plan={plan}
+          onReset={() => dispatch({ type: 'RESET' })}
+          onSaveSnapshot={() => saveSnapshot()}
+        />
+      )}
       <PlanTerminalChat
         userProfile={userProfile}
         onProfileSave={onProfileSave}
