@@ -142,6 +142,8 @@ def record_click(user_id: str, kp_text: str, kp_type: str):
         user_id=user_id,
         after_state={"kp_text": kp_text, "status": new_status, "click_count": new_count},
     )
+    from app.modules.skill_tree.service import increment_activity_counter
+    increment_activity_counter(user_id)
     return {"kp_text": kp_text, "status": new_status, "click_count": new_count}
 
 
@@ -204,6 +206,8 @@ def mark_known(user_id: str, kp_text: str, kp_type: str):
         user_id=user_id,
         after_state={"kp_text": kp_text, "status": STATUS_KNOWN},
     )
+    from app.modules.skill_tree.service import increment_activity_counter
+    increment_activity_counter(user_id)
     return {"kp_text": kp_text, "status": STATUS_KNOWN}
 
 

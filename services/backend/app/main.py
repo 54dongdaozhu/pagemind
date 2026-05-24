@@ -18,6 +18,7 @@ from app.modules.knowledge import router as knowledge_router
 from app.modules.observability import router as obs_router
 from app.modules.plan import router as plan_router
 from app.modules.profile import router as profile_router
+from app.modules.skill_tree import router as skill_tree_router
 from app.modules.rag import router as rag_router
 
 
@@ -77,6 +78,7 @@ def create_app():
     _fast_api.include_router(profile_router.router, dependencies=protected)
     _fast_api.include_router(rag_router.router, dependencies=protected)
     _fast_api.include_router(obs_router.router, dependencies=protected)
+    _fast_api.include_router(skill_tree_router.router, dependencies=protected)
     return _ConcurrencyLimitMiddleware(_fast_api, limit=5)
 
 

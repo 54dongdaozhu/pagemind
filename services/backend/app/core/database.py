@@ -375,6 +375,22 @@ class DocumentImage(Base):
     )
 
 
+class SkillTreeSnapshot(Base):
+    __tablename__ = "skill_tree_snapshots"
+
+    snapshot_id = Column(String(32), primary_key=True)
+    user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
+    status = Column(String(32), nullable=False)        # generating | ready | failed
+    trigger = Column(String(32), nullable=False)       # manual | auto_threshold
+    input_summary = Column(JSON, nullable=True)
+    tree_json = Column(JSON, nullable=True)
+    web_search_used = Column(Boolean, nullable=False, default=False)
+    run_id = Column(String(32), ForeignKey("workflow_runs.run_id"), nullable=True)
+    error_detail = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
 RagChunk = Chunk
 RagDocument = Document
 

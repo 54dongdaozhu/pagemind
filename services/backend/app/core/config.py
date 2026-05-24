@@ -49,6 +49,8 @@ SMTP_FROM = os.getenv("SMTP_FROM", "")
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost")
 REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true"
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+SKILL_TREE_ACTIVITY_THRESHOLD = int(os.getenv("SKILL_TREE_ACTIVITY_THRESHOLD", "10"))
 BUILTIN_USERNAME = os.getenv("BUILTIN_USERNAME", "meng")
 BUILTIN_PASSWORD = os.getenv("BUILTIN_PASSWORD", "")
 BUILTIN_EMAIL = os.getenv("BUILTIN_EMAIL", "meng@local")
