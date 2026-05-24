@@ -9,10 +9,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +53,7 @@ class GenerateRequest(BaseModel):
     topic: str
     requirements: str = ""
     user_id: str = "anonymous"
-    user_profile: dict = {}
+    user_profile: dict = Field(default_factory=dict)
 
 
 class ResumeRequest(BaseModel):
@@ -104,6 +105,26 @@ def _save_generated_document_snapshot(task_id: str, state: dict) -> None:
             resp.read()
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         logger.warning("Failed to save generated document snapshot task_id=%s: %s", task_id, exc)
+
+
+async def _fetch_user_profile_from_backend(auth_header: str) -> dict:
+    if not auth_header:
+        return {}
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{_BACKEND_URL}/api/profile/me",
+                headers={"Authorization": auth_header},
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
+        if resp.status_code not in (401, 403, 404):
+            logger.warning("Failed to fetch user profile: backend returned %s", resp.status_code)
+    except Exception as exc:
+        logger.warning("Failed to fetch user profile from backend: %s", exc)
+    return {}
 
 
 async def _run_graph(task_id: str, initial_state: dict) -> None:
@@ -224,12 +245,14 @@ async def health():
 async def generate(req: GenerateRequest, request: Request):
     task_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
+    auth_header = request.headers.get("authorization", "")
+    user_profile = await _fetch_user_profile_from_backend(auth_header) or req.user_profile or {}
     _tasks[task_id] = {
         "queue": queue,
         "done": False,
         "status": "pending",
         "last_state": {},
-        "auth_header": request.headers.get("authorization", ""),
+        "auth_header": auth_header,
     }
 
     initial_state = {
@@ -237,7 +260,7 @@ async def generate(req: GenerateRequest, request: Request):
         "user_id": req.user_id,
         "topic": req.topic,
         "requirements": req.requirements,
-        "user_profile": req.user_profile or {},
+        "user_profile": user_profile,
         "search_queries": [],
         "web_results": [],
         "research_notes": "",

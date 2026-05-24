@@ -1,17 +1,14 @@
 import logging
 
 from agents.utils.llms import call_llm
+from agents.utils.profile import build_profile_hint
 from state import DocumentGenerationState, SectionOutline
 
 logger = logging.getLogger(__name__)
 
 
 def _section_prompt(section: SectionOutline, topic: str, requirements: str, research_notes: str, user_profile: dict) -> str:
-    profile_hint = ""
-    if user_profile:
-        level = user_profile.get("level", "")
-        if level:
-            profile_hint = f"\nWrite for {level} level learners."
+    profile_hint = build_profile_hint(user_profile, "Write for this learner")
 
     return f"""You are writing a section of an educational document.
 
@@ -32,11 +29,7 @@ Do NOT include an introduction or conclusion for the whole document—just this 
 
 
 def _assemble_prompt(topic: str, requirements: str, sections_text: str, user_profile: dict) -> str:
-    profile_hint = ""
-    if user_profile:
-        level = user_profile.get("level", "")
-        if level:
-            profile_hint = f"\nAudience: {level} learners."
+    profile_hint = build_profile_hint(user_profile, "Audience")
 
     return f"""You are completing an educational document by writing the introduction, conclusion, and reference list.
 

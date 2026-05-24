@@ -1,37 +1,17 @@
 import asyncio
 import logging
-import os
-
-import httpx
 
 from agents.utils.llms import call_llm
+from agents.utils.profile import build_profile_hint
 from agents.utils.search import web_search
 from agents.utils.utils import safe_parse_json
 from state import DocumentGenerationState
 
 logger = logging.getLogger(__name__)
 
-_BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
-
-
-async def _fetch_user_profile(user_id: str) -> dict:
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{_BACKEND_URL}/api/profile/me", headers={"X-Internal-User": user_id})
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception as e:
-        logger.warning("Failed to fetch user profile for %s: %s", user_id, e)
-    return {}
-
 
 def _build_queries_prompt(topic: str, requirements: str, user_profile: dict) -> str:
-    profile_hint = ""
-    if user_profile:
-        level = user_profile.get("level", "")
-        goals = user_profile.get("goals", "")
-        if level or goals:
-            profile_hint = f"\nLearner profile: level={level}, goals={goals}"
+    profile_hint = build_profile_hint(user_profile)
     return f"""You are helping create an educational document on: "{topic}"
 Requirements: {requirements}{profile_hint}
 
@@ -43,11 +23,7 @@ def _build_synthesis_prompt(topic: str, requirements: str, user_profile: dict, w
     results_text = "\n\n".join(
         f"[{i+1}] {r['title']}\n{r['content'][:600]}" for i, r in enumerate(web_results[:8])
     )
-    profile_hint = ""
-    if user_profile:
-        level = user_profile.get("level", "")
-        if level:
-            profile_hint = f"\nTarget audience: {level} learners."
+    profile_hint = build_profile_hint(user_profile, "Target learner")
     return f"""You are a research assistant synthesizing information for an educational document.
 
 Topic: {topic}
@@ -69,14 +45,7 @@ Write in clear, organized prose. This will be used as source material for writin
 def researcher_node(state: DocumentGenerationState) -> dict:
     logger.info("researcher_node start task_id=%s", state["task_id"])
 
-    # Fetch user profile (run async in sync context)
     user_profile = state.get("user_profile") or {}
-    if not user_profile and state.get("user_id"):
-        try:
-            user_profile = asyncio.run(_fetch_user_profile(state["user_id"]))
-        except RuntimeError:
-            # Already in async context
-            pass
 
     topic = state["topic"]
     requirements = state.get("requirements", "")

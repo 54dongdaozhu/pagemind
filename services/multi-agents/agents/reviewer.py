@@ -1,6 +1,7 @@
 import logging
 
 from agents.utils.llms import call_llm
+from agents.utils.profile import build_profile_hint
 from agents.utils.utils import safe_parse_json, ensure_keys
 from state import DocumentGenerationState
 
@@ -10,11 +11,7 @@ _MAX_REVISIONS = 3
 
 
 def _review_prompt(topic: str, requirements: str, draft: str, user_profile: dict, revision_count: int) -> str:
-    profile_hint = ""
-    if user_profile:
-        level = user_profile.get("level", "")
-        if level:
-            profile_hint = f"\nTarget audience: {level} learners."
+    profile_hint = build_profile_hint(user_profile, "Target learner")
 
     return f"""You are a senior editor reviewing an educational document.
 

@@ -1,6 +1,7 @@
 import logging
 
 from agents.utils.llms import call_llm
+from agents.utils.profile import build_profile_hint
 from agents.utils.utils import safe_parse_json, ensure_keys
 from state import DocumentGenerationState, SectionOutline
 
@@ -8,11 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_outline_prompt(topic: str, requirements: str, research_notes: str, user_profile: dict) -> str:
-    profile_hint = ""
-    if user_profile:
-        level = user_profile.get("level", "")
-        if level:
-            profile_hint = f"\nTarget audience: {level} learners."
+    profile_hint = build_profile_hint(user_profile, "Target learner")
 
     return f"""You are an expert curriculum designer creating an educational document outline.
 
