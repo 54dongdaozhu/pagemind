@@ -41,6 +41,13 @@ class UserProfile(Base):
     identity = Column(Text, nullable=True)
     purpose = Column(Text, nullable=True)
     learning_goals = Column(JSON, nullable=True)
+    skill_level = Column(Text, nullable=True)
+    tech_stack = Column(JSON, nullable=True)
+    knowledge_gaps = Column(JSON, nullable=True)
+    learning_style = Column(Text, nullable=True)
+    depth_preference = Column(Text, nullable=True)
+    urgency = Column(Text, nullable=True)
+    domain_focus = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
