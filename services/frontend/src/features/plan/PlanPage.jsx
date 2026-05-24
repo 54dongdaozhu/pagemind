@@ -1,18 +1,22 @@
-import { useReducer, useState } from 'react'
+import { useRef, useReducer, useState } from 'react'
+import { saveGeneratedDocumentSnapshot } from '../../api/generatedDocuments'
 import { analyzeProfile } from '../../api/profile'
 import PlanTerminalChat from './PlanTerminalChat'
 
 // ── 计划内容状态机 ────────────────────────────────────────────────────────────
 
-const PLAN_INIT = { status: 'idle', content: '', isHtml: false, wordUrl: '', error: '' }
+const PLAN_INIT = { status: 'idle', content: '', isHtml: false, wordUrl: '', error: '', saved: false, saving: false, saveError: '' }
 
 function planReducer(state, action) {
   switch (action.type) {
-    case 'GENERATE':     return { status: 'generating', content: '', isHtml: false, wordUrl: '', error: '' }
+    case 'GENERATE':     return { status: 'generating', content: '', isHtml: false, wordUrl: '', error: '', saved: false, saving: false, saveError: '' }
     case 'CHUNK':        return { ...state, content: state.content + action.payload }
     case 'RESOLVE':      return { ...state, status: 'ready', error: '' }
-    case 'RESOLVE_HTML': return { status: 'ready', content: action.payload.html, isHtml: true, wordUrl: action.payload.wordUrl || '', error: '' }
+    case 'RESOLVE_HTML': return { ...state, status: 'ready', content: action.payload.html, isHtml: true, wordUrl: action.payload.wordUrl || '', error: '', saved: false, saveError: '' }
     case 'REJECT':       return { ...state, status: 'error', error: action.payload }
+    case 'SAVE_START':   return { ...state, saving: true, saveError: '' }
+    case 'SAVE_DONE':    return { ...state, saving: false, saved: true, saveError: '' }
+    case 'SAVE_REJECT':  return { ...state, saving: false, saved: false, saveError: action.payload }
     case 'RESET':        return PLAN_INIT
     default:             return state
   }
@@ -53,16 +57,27 @@ function buildPreviewDoc(html) {
 </html>`
 }
 
-function PlanContentArea({ plan, onReset }) {
-  const { status, content, isHtml, wordUrl, error } = plan
+function PlanContentArea({ plan, onReset, onSaveSnapshot }) {
+  const { status, content, isHtml, wordUrl, error, saved, saving, saveError } = plan
 
   return (
     <div className="plan-content-area">
-      {wordUrl && (
+      {(wordUrl || isHtml) && (
         <div className="doc-gen-download-bar">
-          <a href={wordUrl} download className="doc-gen-download-btn">下载 Word</a>
+          {wordUrl && <a href={wordUrl} download className="doc-gen-download-btn">下载 Word</a>}
+          {isHtml && (
+            <button
+              type="button"
+              className="doc-gen-save-btn"
+              onClick={onSaveSnapshot}
+              disabled={saving || saved}
+            >
+              {saving ? '保存中...' : saved ? '已保存' : '保存到个人中心'}
+            </button>
+          )}
         </div>
       )}
+      {saveError && <div className="plan-save-error">{saveError}</div>}
       {status === 'idle' && (
         <p className="plan-content-hint">在右侧终端输入主题生成教学文档</p>
       )}
@@ -96,16 +111,48 @@ function PlanContentArea({ plan, onReset }) {
 
 function PlanMain({ userProfile, onProfileSave, userId }) {
   const [plan, dispatch] = useReducer(planReducer, PLAN_INIT)
+  const [generationMeta, setGenerationMeta] = useState({ taskId: '', topic: '', requirements: '' })
+  const generationMetaRef = useRef(generationMeta)
+
+  function updateGenerationMeta(meta) {
+    generationMetaRef.current = meta
+    setGenerationMeta(meta)
+  }
+
+  async function saveSnapshot(metaOverride = {}) {
+    const html = metaOverride.html ?? plan.content
+    if (!html) return
+    const meta = { ...generationMetaRef.current, ...metaOverride }
+    dispatch({ type: 'SAVE_START' })
+    try {
+      await saveGeneratedDocumentSnapshot({
+        sourceTaskId: meta.taskId,
+        title: meta.topic,
+        topic: meta.topic,
+        requirements: meta.requirements,
+        html,
+      })
+      dispatch({ type: 'SAVE_DONE' })
+    } catch (err) {
+      dispatch({ type: 'SAVE_REJECT', payload: err.message || '保存失败' })
+    }
+  }
 
   return (
     <div className="plan-page-main">
-      <PlanContentArea plan={plan} onReset={() => dispatch({ type: 'RESET' })} />
+      <PlanContentArea
+        plan={plan}
+        onReset={() => dispatch({ type: 'RESET' })}
+        onSaveSnapshot={() => saveSnapshot()}
+      />
       <PlanTerminalChat
         userProfile={userProfile}
         onProfileSave={onProfileSave}
         userId={userId}
         planStatus={plan.status}
         onGenerate={() => dispatch({ type: 'GENERATE' })}
+        onGenerationMetaChange={updateGenerationMeta}
+        onAutoSaveSnapshot={saveSnapshot}
         onContentChunk={chunk => dispatch({ type: 'CHUNK', payload: chunk })}
         onHtmlReady={(html, wordUrl) => dispatch({ type: 'RESOLVE_HTML', payload: { html, wordUrl } })}
         onDone={() => dispatch({ type: 'RESOLVE' })}

@@ -22,3 +22,20 @@ export async function fetchGeneratedDocument(generatedDocId) {
     updatedAt: data.updated_at,
   }
 }
+
+
+export async function saveGeneratedDocumentSnapshot({ sourceTaskId, title, topic, requirements, html }) {
+  const response = await apiFetch('/api/generated-documents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      source_task_id: sourceTaskId || null,
+      title: title || topic || '生成文档',
+      topic: topic || title || '生成文档',
+      requirements: requirements || '',
+      html_snapshot: html,
+    }),
+  })
+  if (!response.ok) throw new Error(`保存失败: ${response.status}`)
+  return response.json()
+}

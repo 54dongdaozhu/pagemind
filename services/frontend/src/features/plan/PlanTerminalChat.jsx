@@ -14,7 +14,19 @@ const AGENT_LABELS = {
 
 const READY_MESSAGE = '已加载用户画像，生成模块准备就绪。'
 
-function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGenerate, onHtmlReady, onDone, onReject, onReset }) {
+function PlanTerminalChat({
+  userProfile,
+  onProfileSave,
+  userId,
+  planStatus,
+  onGenerate,
+  onGenerationMetaChange,
+  onAutoSaveSnapshot,
+  onHtmlReady,
+  onDone,
+  onReject,
+  onReset,
+}) {
   const [messages, setMessages] = useState([
     { role: 'system', text: READY_MESSAGE },
   ])
@@ -48,6 +60,7 @@ function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGe
       onComplete: (msg) => {
         const wordUrl = msg.word_url ? getWordDownloadUrl(tid) : null
         onHtmlReady(msg.html || '', wordUrl)
+        onAutoSaveSnapshot?.({ taskId: tid, html: msg.html || '' })
         addMsg('assistant', '文档已生成完成！')
         onDone()
       },
@@ -66,11 +79,13 @@ function PlanTerminalChat({ userProfile, onProfileSave, userId, planStatus, onGe
     setInput('')
     const requestText = requirements.trim()
     setRequirements('')
+    onGenerationMetaChange?.({ taskId: '', topic: text, requirements: requestText })
     onGenerate()
 
     try {
       const { task_id } = await startDocGen(text, requestText, userId || 'anonymous', userProfile)
       setTaskId(task_id)
+      onGenerationMetaChange?.({ taskId: task_id, topic: text, requirements: requestText })
       _startStream(task_id)
     } catch (e) {
       const msg = e.message || '启动失败'

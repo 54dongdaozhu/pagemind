@@ -2316,6 +2316,7 @@ body.toc-resize-active .toc-resize-handle::after {
   background: var(--panel-bg);
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .doc-gen-download-btn {
@@ -2331,6 +2332,35 @@ body.toc-resize-active .toc-resize-handle::after {
 
 .doc-gen-download-btn:hover {
   background: #1d4ed8;
+}
+
+.doc-gen-save-btn {
+  background: #2e7d52;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.doc-gen-save-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.doc-gen-save-btn:not(:disabled):hover {
+  background: #256b46;
+}
+
+.plan-save-error {
+  width: 100%;
+  border-bottom: 1px solid #f3c5c0;
+  background: #fff4f2;
+  color: #b42318;
+  font-size: 12px;
+  padding: 7px 16px;
+  box-sizing: border-box;
 }
 
 .doc-gen-html-content {
