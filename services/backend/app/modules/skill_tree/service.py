@@ -55,14 +55,50 @@ def get_latest_snapshot(user_id: str) -> dict | None:
     return result
 
 
+_GENERATING_TIMEOUT_SECONDS = 300  # worker restart leaves snapshots stuck forever
+
+
+def _is_generation_stale(row: SkillTreeSnapshot, now: datetime | None = None) -> bool:
+    if row.status != "generating" or not row.created_at:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return (now - row.created_at).total_seconds() > _GENERATING_TIMEOUT_SECONDS
+
+
+def _mark_stale_generating(snapshot_id: str) -> bool:
+    now = datetime.now(timezone.utc)
+    with get_db() as db:
+        row = db.get(SkillTreeSnapshot, snapshot_id)
+        if not row or not _is_generation_stale(row, now):
+            return False
+        row.status = "failed"
+        row.error_detail = "timeout: worker did not complete within 5 minutes"
+        row.updated_at = now
+        db.commit()
+        return True
+
+
 def get_snapshot_status(snapshot_id: str) -> dict | None:
     with get_db() as db:
         row = db.get(SkillTreeSnapshot, snapshot_id)
     if row is None:
         return None
+
+    if _mark_stale_generating(snapshot_id):
+        with get_db() as db:
+            row = db.get(SkillTreeSnapshot, snapshot_id)
+
+    current_step = None
+    try:
+        from app.shared.cache import get_redis
+        val = get_redis().get(f"skill_tree:step:{snapshot_id}")
+        current_step = val.decode() if isinstance(val, bytes) else val
+    except Exception:
+        pass
     return {
         "snapshot_id": row.snapshot_id,
         "status": row.status,
+        "current_step": current_step,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "error_detail": row.error_detail,
@@ -88,16 +124,21 @@ def create_snapshot(user_id: str, trigger: str = "manual") -> str:
 
 def get_generating_snapshot(user_id: str) -> str | None:
     with get_db() as db:
-        row = db.execute(
+        rows = db.execute(
             select(SkillTreeSnapshot)
             .where(
                 SkillTreeSnapshot.user_id == user_id,
                 SkillTreeSnapshot.status == "generating",
             )
             .order_by(SkillTreeSnapshot.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-    return row.snapshot_id if row else None
+            .limit(10)
+        ).scalars().all()
+
+    for row in rows:
+        if _mark_stale_generating(row.snapshot_id):
+            continue
+        return row.snapshot_id
+    return None
 
 
 def generate_skill_tree_job(user_id: str, snapshot_id: str) -> None:
@@ -109,13 +150,23 @@ def generate_skill_tree_job(user_id: str, snapshot_id: str) -> None:
     try:
         _do_generate(user_id, snapshot_id, run_id)
         db_log.finish_workflow_run(run_id, success=True)
-    except Exception as exc:
+    except BaseException as exc:
         logger.exception("[SkillTree] generation failed for user %s snapshot %s", user_id, snapshot_id)
         _mark_failed(snapshot_id, str(exc), run_id)
         db_log.finish_workflow_run(run_id, success=False, error_details={"error": str(exc)})
+        raise
+
+
+def _set_step(snapshot_id: str, step: str) -> None:
+    try:
+        from app.shared.cache import get_redis
+        get_redis().set(f"skill_tree:step:{snapshot_id}", step, ex=300)
+    except Exception:
+        pass
 
 
 def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
+    _set_step(snapshot_id, "aggregate")
     step1_id = db_log.create_workflow_step(run_id=run_id, step_name="aggregate_signals", step_order=1)
     signals = aggregate_user_signals(user_id)
     input_summary = {
@@ -136,15 +187,18 @@ def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
     tavily_key = _get_tavily_key()
     skill_level = (signals["profile"].get("skill_level") or "").strip()
     if tavily_key and skill_level != "高级":
+        _set_step(snapshot_id, "web_search")
         step2_id = db_log.create_workflow_step(run_id=run_id, step_name="web_search", step_order=2)
         web_snippets, web_search_used = _run_web_search(signals, tavily_key)
         db_log.finish_workflow_step(step2_id, success=True, output_data={"skills_searched": len(web_snippets)})
 
     if web_search_used:
+        _set_step(snapshot_id, "llm_finalize")
         step3_id = db_log.create_workflow_step(run_id=run_id, step_name="llm_finalize", step_order=3)
         tree_json = _llm_finalize(profile_section, signals_section, web_snippets, run_id)
         db_log.finish_workflow_step(step3_id, success=True)
     else:
+        _set_step(snapshot_id, "llm_analyze")
         step3_id = db_log.create_workflow_step(run_id=run_id, step_name="llm_analyze", step_order=3)
         tree_json = _llm_analyze(profile_section, signals_section, run_id)
         db_log.finish_workflow_step(step3_id, success=True)
