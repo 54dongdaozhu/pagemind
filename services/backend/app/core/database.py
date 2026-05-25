@@ -396,12 +396,31 @@ RagDocument = Document
 
 
 # ── 引擎 & 会话────────────────────────────────────────────────────────────
-engine_options = {"pool_pre_ping": True}
+engine_options = {"pool_pre_ping": True, "pool_recycle": 1800}
 if DATABASE_URL.startswith("sqlite"):
     engine_options["connect_args"] = {"check_same_thread": False}
+elif DATABASE_URL.startswith("postgresql"):
+    engine_options["connect_args"] = {
+        "connect_timeout": 10,
+        "options": "-c statement_timeout=60000",
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
 
 engine = create_engine(DATABASE_URL, **engine_options)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+
+@_sa_event.listens_for(engine, "handle_error")
+def _invalidate_on_db_error(context):
+    """Discard connections that hit a DBAPI-level error (e.g. PGRES_TUPLES_OK corruption)."""
+    if context.connection is not None:
+        context.connection.invalidate()
 
 
 @contextmanager
@@ -409,6 +428,9 @@ def get_db():
     session = SessionLocal()
     try:
         yield session
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 

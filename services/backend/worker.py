@@ -16,6 +16,21 @@ from app.shared.cache import get_redis
 logger = logging.getLogger(__name__)
 
 
+def _reset_child_connections() -> None:
+    """RQ forks per job; inherited sockets can corrupt psycopg/Redis protocol state."""
+    from app.core.database import engine
+    from app.shared.cache import get_redis
+
+    engine.dispose(close=False)
+    get_redis.cache_clear()
+
+
+class DatabaseSafeWorker(Worker):
+    def main_work_horse(self, job, queue):
+        _reset_child_connections()
+        super().main_work_horse(job, queue)
+
+
 def _run_db_log_stream_consumer() -> None:
     redis_conn = get_redis()
     consumer_name = f"{socket.gethostname()}:{threading.get_ident()}"
@@ -62,7 +77,7 @@ def main() -> None:
 
     redis_conn = Redis.from_url(REDIS_URL)
     queue = Queue(RQ_QUEUE_NAME, connection=redis_conn)
-    worker = Worker([queue], connection=redis_conn)
+    worker = DatabaseSafeWorker([queue], connection=redis_conn)
     worker.work()
 
 

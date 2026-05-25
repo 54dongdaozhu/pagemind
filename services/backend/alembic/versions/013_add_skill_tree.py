@@ -26,7 +26,7 @@ def upgrade() -> None:
         sa.Column("trigger", sa.String(32), nullable=False),
         sa.Column("input_summary", sa.JSON(), nullable=True),
         sa.Column("tree_json", sa.JSON(), nullable=True),
-        sa.Column("web_search_used", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("web_search_used", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("run_id", sa.String(32), sa.ForeignKey("workflow_runs.run_id"), nullable=True),
         sa.Column("error_detail", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
