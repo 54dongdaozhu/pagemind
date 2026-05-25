@@ -1,11 +1,12 @@
 import json
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.core.database import SkillTreeSnapshot, get_db
+from app.core.database import SkillTreeSnapshot, WorkflowRun, WorkflowStep, get_db
 from app.modules.skill_tree.aggregator import (
     aggregate_user_signals,
     build_profile_section,
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 _CACHE_KEY = "skill_tree:user:{user_id}"
 _ACTIVITY_KEY = "skill_tree:activity:{user_id}"
+_STEP_TTL_SECONDS = 300
+_WEB_SEARCH_MAX_SKILLS = 3
+_WEB_SEARCH_TIMEOUT_SECONDS = 8
 
 
 def _cache_key(user_id: str) -> str:
@@ -141,33 +145,134 @@ def get_generating_snapshot(user_id: str) -> str | None:
     return None
 
 
+class _WorkflowTracker:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.run_id: str | None = None
+
+    def start(self) -> str | None:
+        run_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc)
+        try:
+            with get_db() as db:
+                db.add(WorkflowRun(
+                    run_id=run_id,
+                    user_id=self.user_id,
+                    workflow_type="skill_tree_generation",
+                    trigger_source="rq",
+                    status="running",
+                    started_at=now,
+                    created_at=now,
+                    updated_at=now,
+                ))
+                db.commit()
+            self.run_id = run_id
+        except Exception as exc:
+            logger.warning("[SkillTree] workflow run logging skipped: %s", exc)
+        return self.run_id
+
+    def start_step(self, step_name: str, step_order: int, input_data: dict | None = None) -> str | None:
+        if not self.run_id:
+            return None
+        step_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc)
+        try:
+            with get_db() as db:
+                db.add(WorkflowStep(
+                    step_id=step_id,
+                    run_id=self.run_id,
+                    step_name=step_name,
+                    step_order=step_order,
+                    status="running",
+                    input_data=input_data,
+                    started_at=now,
+                    created_at=now,
+                ))
+                db.commit()
+            return step_id
+        except Exception as exc:
+            logger.warning("[SkillTree] workflow step logging skipped: %s", exc)
+            return None
+
+    def finish_step(
+        self,
+        step_id: str | None,
+        *,
+        success: bool = True,
+        output_data: dict | None = None,
+        error_details: dict | None = None,
+    ) -> None:
+        if not step_id:
+            return
+        now = datetime.now(timezone.utc)
+        try:
+            with get_db() as db:
+                step = db.get(WorkflowStep, step_id)
+                if not step:
+                    return
+                step.status = "completed" if success else "failed"
+                step.output_data = output_data
+                step.error_details = error_details
+                step.finished_at = now
+                db.commit()
+        except Exception as exc:
+            logger.debug("[SkillTree] workflow step finish skipped: %s", exc)
+
+    def finish(
+        self,
+        *,
+        success: bool = True,
+        output_data: dict | None = None,
+        error_details: dict | None = None,
+    ) -> None:
+        if not self.run_id:
+            return
+        now = datetime.now(timezone.utc)
+        try:
+            with get_db() as db:
+                run = db.get(WorkflowRun, self.run_id)
+                if not run:
+                    return
+                run.status = "completed" if success else "failed"
+                run.output_data = output_data
+                run.error_details = error_details
+                run.finished_at = now
+                run.updated_at = now
+                db.commit()
+        except Exception as exc:
+            logger.debug("[SkillTree] workflow run finish skipped: %s", exc)
+
+
 def generate_skill_tree_job(user_id: str, snapshot_id: str) -> None:
-    run_id = db_log.create_workflow_run(
-        workflow_type="skill_tree_generation",
-        user_id=user_id,
-        trigger_source="rq",
-    )
+    tracker = _WorkflowTracker(user_id)
+    run_id = tracker.start()
+    user_token = db_log.current_user_id.set(user_id)
+    run_token = db_log.current_run_id.set(run_id) if run_id else None
     try:
-        _do_generate(user_id, snapshot_id, run_id)
-        db_log.finish_workflow_run(run_id, success=True)
+        output_data = _do_generate(user_id, snapshot_id, tracker)
+        tracker.finish(success=True, output_data=output_data)
     except BaseException as exc:
         logger.exception("[SkillTree] generation failed for user %s snapshot %s", user_id, snapshot_id)
         _mark_failed(snapshot_id, str(exc), run_id)
-        db_log.finish_workflow_run(run_id, success=False, error_details={"error": str(exc)})
+        tracker.finish(success=False, error_details={"error": str(exc)})
         raise
+    finally:
+        if run_token is not None:
+            db_log.current_run_id.reset(run_token)
+        db_log.current_user_id.reset(user_token)
 
 
 def _set_step(snapshot_id: str, step: str) -> None:
     try:
         from app.shared.cache import get_redis
-        get_redis().set(f"skill_tree:step:{snapshot_id}", step, ex=300)
+        get_redis().set(f"skill_tree:step:{snapshot_id}", step, ex=_STEP_TTL_SECONDS)
     except Exception:
         pass
 
 
-def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
+def _do_generate(user_id: str, snapshot_id: str, tracker: _WorkflowTracker) -> dict:
     _set_step(snapshot_id, "aggregate")
-    step1_id = db_log.create_workflow_step(run_id=run_id, step_name="aggregate_signals", step_order=1)
+    step1_id = tracker.start_step("aggregate_signals", 1)
     signals = aggregate_user_signals(user_id)
     input_summary = {
         "doc_count": len(signals["docs"]),
@@ -176,7 +281,7 @@ def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
         "known_kp_count": len(signals["known_kps"]),
         "qa_count": len(signals["qa_topics"]),
     }
-    db_log.finish_workflow_step(step1_id, success=True, output_data=input_summary)
+    tracker.finish_step(step1_id, success=True, output_data=input_summary)
 
     profile_section = build_profile_section(signals["profile"])
     signals_section = build_signals_section(signals)
@@ -188,21 +293,22 @@ def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
     skill_level = (signals["profile"].get("skill_level") or "").strip()
     if tavily_key and skill_level != "高级":
         _set_step(snapshot_id, "web_search")
-        step2_id = db_log.create_workflow_step(run_id=run_id, step_name="web_search", step_order=2)
+        step2_id = tracker.start_step("web_search", 2)
         web_snippets, web_search_used = _run_web_search(signals, tavily_key)
-        db_log.finish_workflow_step(step2_id, success=True, output_data={"skills_searched": len(web_snippets)})
+        tracker.finish_step(step2_id, success=True, output_data={"skills_searched": len(web_snippets)})
 
     if web_search_used:
         _set_step(snapshot_id, "llm_finalize")
-        step3_id = db_log.create_workflow_step(run_id=run_id, step_name="llm_finalize", step_order=3)
-        tree_json = _llm_finalize(profile_section, signals_section, web_snippets, run_id)
-        db_log.finish_workflow_step(step3_id, success=True)
+        step3_id = tracker.start_step("llm_finalize", 3)
+        tree_json = _llm_finalize(profile_section, signals_section, web_snippets)
+        tracker.finish_step(step3_id, success=True)
     else:
         _set_step(snapshot_id, "llm_analyze")
-        step3_id = db_log.create_workflow_step(run_id=run_id, step_name="llm_analyze", step_order=3)
-        tree_json = _llm_analyze(profile_section, signals_section, run_id)
-        db_log.finish_workflow_step(step3_id, success=True)
+        step3_id = tracker.start_step("llm_analyze", 3)
+        tree_json = _llm_analyze(profile_section, signals_section)
+        tracker.finish_step(step3_id, success=True)
 
+    _set_step(snapshot_id, "persist")
     now = datetime.now(timezone.utc)
     with get_db() as db:
         row = db.get(SkillTreeSnapshot, snapshot_id)
@@ -211,7 +317,7 @@ def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
             row.input_summary = input_summary
             row.tree_json = tree_json
             row.web_search_used = web_search_used
-            row.run_id = run_id
+            row.run_id = tracker.run_id
             row.updated_at = now
             db.commit()
 
@@ -224,9 +330,10 @@ def _do_generate(user_id: str, snapshot_id: str, run_id: str) -> None:
         user_id=user_id,
         meta=input_summary,
     )
+    return input_summary
 
 
-def _llm_analyze(profile_section: str, signals_section: str, run_id: str) -> dict:
+def _llm_analyze(profile_section: str, signals_section: str) -> dict:
     prompt = SKILL_TREE_ANALYZE_PROMPT.format(
         profile_section=profile_section,
         signals_section=signals_section,
@@ -240,7 +347,7 @@ def _llm_analyze(profile_section: str, signals_section: str, run_id: str) -> dic
     return json.loads(raw)
 
 
-def _llm_finalize(profile_section: str, signals_section: str, web_snippets: dict, run_id: str) -> dict:
+def _llm_finalize(profile_section: str, signals_section: str, web_snippets: dict) -> dict:
     web_section = "\n".join(f"- {skill}: {snippet}" for skill, snippet in web_snippets.items())
     prompt = SKILL_TREE_FINALIZE_PROMPT.format(
         profile_section=profile_section,
@@ -266,25 +373,38 @@ def _run_web_search(signals: dict, tavily_key: str) -> tuple[dict, bool]:
     domain_focus = signals["profile"].get("domain_focus") or []
     user_domain = domain_focus[0] if domain_focus else "技术开发"
 
-    learning_kp_texts = [k["text"] for k in signals["learning_kps"][:5]]
+    learning_kp_texts = [k["text"] for k in signals["learning_kps"][:_WEB_SEARCH_MAX_SKILLS]]
     if not learning_kp_texts:
         return {}, False
 
     client = TavilyClient(api_key=tavily_key)
+
+    def search_one(kp: str) -> tuple[str, str | None]:
+        result = client.search(
+            f"{kp} 学习路线 {user_domain}",
+            max_results=2,
+            search_depth="basic",
+        )
+        first = (result.get("results") or [{}])[0]
+        content = first.get("content", "").strip()[:300]
+        return kp, content or None
+
     snippets: dict[str, str] = {}
-    for kp in learning_kp_texts:
-        try:
-            result = client.search(
-                f"{kp} 学习路线 {user_domain}",
-                max_results=2,
-                search_depth="basic",
-            )
-            first = (result.get("results") or [{}])[0]
-            content = first.get("content", "").strip()[:300]
-            if content:
-                snippets[kp] = content
-        except Exception as exc:
-            logger.debug("[SkillTree] web search failed for '%s': %s", kp, exc)
+    executor = ThreadPoolExecutor(max_workers=min(_WEB_SEARCH_MAX_SKILLS, len(learning_kp_texts)))
+    futures = {executor.submit(search_one, kp): kp for kp in learning_kp_texts}
+    try:
+        for future in as_completed(futures, timeout=_WEB_SEARCH_TIMEOUT_SECONDS):
+            kp = futures[future]
+            try:
+                skill, content = future.result()
+                if content:
+                    snippets[skill] = content
+            except Exception as exc:
+                logger.debug("[SkillTree] web search failed for '%s': %s", kp, exc)
+    except TimeoutError:
+        logger.debug("[SkillTree] web search timed out after %s seconds", _WEB_SEARCH_TIMEOUT_SECONDS)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     return snippets, bool(snippets)
 

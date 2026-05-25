@@ -2637,10 +2637,12 @@ body.toc-resize-active .toc-resize-handle::after {
 .skill-tree-nodes {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .skill-tree-card {
@@ -2648,6 +2650,9 @@ body.toc-resize-active .toc-resize-handle::after {
   border-radius: 10px;
   padding: 10px 12px;
   background: #fff;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .skill-tree-card-known { opacity: 0.55; }
@@ -2657,12 +2662,15 @@ body.toc-resize-active .toc-resize-handle::after {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .skill-tree-skill {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .skill-tree-badges {
@@ -2670,6 +2678,8 @@ body.toc-resize-active .toc-resize-handle::after {
   gap: 4px;
   flex-wrap: wrap;
   flex-shrink: 0;
+  justify-content: flex-end;
+  max-width: 45%;
 }
 
 .skill-tree-priority {
@@ -2713,6 +2723,7 @@ body.toc-resize-active .toc-resize-handle::after {
   font-size: 0.8rem;
   color: #666;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .skill-tree-snippet {
@@ -2724,6 +2735,7 @@ body.toc-resize-active .toc-resize-handle::after {
   padding: 6px 8px;
   line-height: 1.5;
   border-left: 3px solid #4caf50;
+  overflow-wrap: anywhere;
 }
 
 /* ── Skill Tree 树形布局 ── */
@@ -2762,13 +2774,15 @@ body.toc-resize-active .toc-resize-handle::after {
   gap: 6px;
 }
 .skill-tree-child-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: flex-start;
+  width: 100%;
+  min-width: 0;
 }
 .skill-tree-connector {
   position: relative;
-  width: 20px;
-  flex-shrink: 0;
+  width: 24px;
   align-self: stretch;
 }
 .skill-tree-connector::before {
@@ -2792,6 +2806,6 @@ body.toc-resize-active .toc-resize-handle::after {
   height: 18px;
 }
 .skill-tree-child-row .skill-tree-card {
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }

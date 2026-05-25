@@ -8,6 +8,7 @@ const STEP_LABELS = {
   web_search: '联网验证关键技能...',
   llm_analyze: 'AI 分析技能缺口...',
   llm_finalize: 'AI 生成最终技能树...',
+  persist: '正在保存技能树...',
 }
 
 function SkillTreePanel({ onStepMessage }) {
@@ -62,7 +63,10 @@ function SkillTreePanel({ onStepMessage }) {
   const startPoll = (snapshotId) => {
     stopPoll()
     lastStepRef.current = null
-    pollRef.current = setInterval(async () => {
+    let inFlight = false
+    const pollStatus = async () => {
+      if (inFlight) return
+      inFlight = true
       try {
         const status = await getSkillTreeStatus(snapshotId)
         if (status.current_step && status.current_step !== lastStepRef.current) {
@@ -86,8 +90,12 @@ function SkillTreePanel({ onStepMessage }) {
         }
       } catch {
         // keep polling
+      } finally {
+        inFlight = false
       }
-    }, 3000)
+    }
+    pollStatus()
+    pollRef.current = setInterval(pollStatus, 2000)
   }
 
   const handleGenerate = async () => {
