@@ -20,6 +20,7 @@ from app.modules.extraction.service import (
     extract_knowledge_for_document,
     extract_knowledge_from_text,
     finalize_knowledge_extraction,
+    get_persisted_doc_kps,
     get_refined_doc_kps,
     get_refinement_status,
     get_extraction_status,
@@ -109,8 +110,8 @@ def get_doc_knowledge_points(
     current_user: User = Depends(get_current_user),
 ):
     """
-    获取文档级精炼知识点（Phase 2 完成后可用）。
-    Phase 2 仍在运行时返回 is_refined=False 和空列表，前端可轮询。
+    获取文档知识点。
+    优先返回 Phase 2 Redis 精炼结果；缓存未命中时回退到数据库关联和提取缓存。
     """
     refined = get_refined_doc_kps(current_user.user_id, doc_id)
     refinement = get_refinement_status(current_user.user_id, doc_id) or {}
@@ -121,6 +122,16 @@ def get_doc_knowledge_points(
             knowledge_points=kps,
             is_refined=True,
             refinement_status=refinement.get("status", "completed"),
+            refinement_run_id=refinement.get("run_id"),
+        )
+    persisted = get_persisted_doc_kps(current_user.user_id, doc_id)
+    if persisted:
+        kps = [KnowledgePoint(**kp) for kp in persisted if isinstance(kp, dict)]
+        return DocKPResponse(
+            doc_id=doc_id,
+            knowledge_points=kps,
+            is_refined=False,
+            refinement_status=refinement.get("status", "degraded"),
             refinement_run_id=refinement.get("run_id"),
         )
     return DocKPResponse(

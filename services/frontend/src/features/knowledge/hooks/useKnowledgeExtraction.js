@@ -108,6 +108,40 @@ export function useKnowledgeExtraction() {
     extractingRef.current = false
   }, [stopRefinementPolling])
 
+  const loadDocumentKnowledge = useCallback(async (docId) => {
+    if (!docId) return null
+    const runId = extractionRunRef.current + 1
+    extractionRunRef.current = runId
+    stopRefinementPolling()
+    setExtracting(false)
+    setExtractError('')
+    extractingRef.current = false
+
+    try {
+      const data = await fetchDocumentKnowledgePoints(docId)
+      if (extractionRunRef.current !== runId) return null
+
+      const status = data.refinement_status || (data.is_refined ? 'completed' : 'not_started')
+      const points = normalizeKnowledgePoints(data.knowledge_points, data.is_refined ? 'refined-kp' : 'persisted-kp')
+      setKnowledgePoints(points)
+      setExtractProgress({ done: 0, total: 0 })
+      setRefinementStatus(status)
+      setRefinementRunId(data.refinement_run_id || null)
+      setHighlightResetToken(token => token + 1)
+
+      if (!data.is_refined && points.length === 0 && !REFINEMENT_TERMINAL_STATUSES.has(status) && status !== 'not_started') {
+        pollRefinedKnowledgePoints(docId, runId, data.refinement_run_id)
+      }
+      return data
+    } catch (err) {
+      console.warn('文档知识点恢复失败:', err)
+      if (extractionRunRef.current === runId) {
+        setExtractError(err?.message || '文档知识点恢复失败')
+      }
+      return null
+    }
+  }, [pollRefinedKnowledgePoints, stopRefinementPolling])
+
   const extractAllChunks = useCallback(async (_html, docId = null, options = {}) => {
     if (extractingRef.current) return
     if (!docId) {
@@ -240,6 +274,7 @@ export function useKnowledgeExtraction() {
     highlightResetToken,
     uniqueKPs,
     extractAllChunks,
+    loadDocumentKnowledge,
     resetExtraction,
     restoreExtraction,
   }

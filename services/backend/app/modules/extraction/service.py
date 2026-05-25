@@ -69,6 +69,21 @@ def get_refined_doc_kps(user_id: str, doc_id: str) -> list[dict] | None:
     return None
 
 
+def get_persisted_doc_kps(user_id: str, doc_id: str) -> list[dict]:
+    """Load document knowledge points from persisted DB links, then extract cache.
+
+    Older or race-affected documents may have chunk results in extract_cache even
+    when the chunk_knowledge_points links were not created yet. The cache fallback
+    repairs those links so future reads can use the database path directly.
+    """
+    linked = _load_doc_kps_from_db(user_id, doc_id)
+    if linked:
+        return linked
+
+    cached = _load_doc_kps_from_extract_cache(user_id, doc_id)
+    return cached
+
+
 def get_refinement_status(user_id: str, doc_id: str) -> dict | None:
     data = get_json(_doc_refinement_progress_key(user_id, doc_id))
     return data if isinstance(data, dict) else None
@@ -77,6 +92,132 @@ def get_refinement_status(user_id: str, doc_id: str) -> dict | None:
 def save_refined_doc_kps(user_id: str, doc_id: str, kps: list[dict]) -> None:
     """将 Phase 2 精炼结果写入 Redis。"""
     set_json(_doc_kp_redis_key(user_id, doc_id), kps, _DOC_KP_CACHE_TTL)
+
+
+def _load_doc_kps_from_db(user_id: str, doc_id: str) -> list[dict]:
+    storage_doc_id = scoped_doc_id(user_id, doc_id)
+    with get_db() as db:
+        rows = db.execute(
+            select(ChunkKnowledgePoint, KnowledgePointRow)
+            .join(KnowledgePointRow, KnowledgePointRow.kp_id == ChunkKnowledgePoint.kp_id)
+            .where(ChunkKnowledgePoint.doc_id == storage_doc_id)
+            .order_by(ChunkKnowledgePoint.chunk_index.asc(), ChunkKnowledgePoint.confidence.desc())
+        ).all()
+
+    return _dedupe_doc_kps([
+        {
+            "text": kp.kp_text,
+            "type": kp.kp_type,
+            "explanation": kp.explanation or "",
+            "importance": kp.importance or "medium",
+            "chunk_index": link.chunk_index,
+        }
+        for link, kp in rows
+        if kp.kp_text
+    ])
+
+
+def _load_doc_kps_from_extract_cache(user_id: str, doc_id: str) -> list[dict]:
+    rows = list_document_chunks(user_id, doc_id)
+    all_items: list[dict] = []
+    for row in rows:
+        content = row.get("content")
+        chunk_index = row.get("chunk_index")
+        if not isinstance(content, str) or chunk_index is None:
+            continue
+        chunk_ids = list(dict.fromkeys([
+            _frontend_extract_chunk_id(doc_id, int(chunk_index), content),
+            _canonical_extract_chunk_id(user_id, doc_id, row),
+        ]))
+        chunk_id = ""
+        cache_key = ""
+        knowledge_points = None
+        for candidate in chunk_ids:
+            if not candidate:
+                continue
+            candidate_cache_key = _scoped_chunk_id(user_id, candidate)
+            knowledge_points = _load_from_cache(candidate_cache_key, content)
+            if knowledge_points is not None:
+                chunk_id = candidate
+                cache_key = candidate_cache_key
+                break
+        if knowledge_points is None or not chunk_id or not cache_key:
+            continue
+        _persist_or_enqueue(
+            user_id,
+            chunk_id,
+            cache_key,
+            knowledge_points,
+            doc_id,
+            int(chunk_index),
+        )
+        all_items.extend({
+            **kp.model_dump(),
+            "chunk_index": int(chunk_index),
+        } for kp in knowledge_points)
+
+    return _dedupe_doc_kps(all_items)
+
+
+def _dedupe_doc_kps(items: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    counts: dict[str, int] = {}
+    for item in items:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        counts[text] = counts.get(text, 0) + 1
+        existing = merged.get(text)
+        if existing is None:
+            merged[text] = {
+                "text": text,
+                "type": item.get("type") or "term",
+                "explanation": item.get("explanation") or "",
+                "importance": item.get("importance") or "medium",
+                "chunk_index": item.get("chunk_index"),
+            }
+        elif existing.get("importance") != "high" and item.get("importance") == "high":
+            existing["importance"] = "high"
+            if item.get("explanation"):
+                existing["explanation"] = item["explanation"]
+            if item.get("chunk_index") is not None:
+                existing["chunk_index"] = item["chunk_index"]
+
+    result = []
+    for item in merged.values():
+        item["chunk_count"] = counts.get(item["text"], 1)
+        result.append(item)
+    return result
+
+
+def _frontend_extract_chunk_id(doc_id: str, chunk_index: int, text: str) -> str:
+    return _js_hash_string(f"{doc_id}:{chunk_index}:{text}")
+
+
+def _js_hash_string(value: str) -> str:
+    hash_value = 0
+    utf16 = value.encode("utf-16-le", "surrogatepass")
+    for idx in range(0, len(utf16), 2):
+        char = int.from_bytes(utf16[idx:idx + 2], "little")
+        hash_value = ((hash_value << 5) - hash_value) + char
+        hash_value = _to_int32(hash_value)
+    return _to_base36(abs(hash_value))
+
+
+def _to_int32(value: int) -> int:
+    value &= 0xFFFFFFFF
+    return value - 0x100000000 if value & 0x80000000 else value
+
+
+def _to_base36(value: int) -> str:
+    if value == 0:
+        return "0"
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while value:
+        value, remainder = divmod(value, 36)
+        out = digits[remainder] + out
+    return out
 
 
 def _wait_for_rag_ready(user_id: str, doc_id: str) -> bool:

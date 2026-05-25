@@ -182,6 +182,7 @@ function App() {
     knowledgePoints,
     uniqueKPs,
     extractAllChunks,
+    loadDocumentKnowledge,
     resetExtraction,
     restoreExtraction,
   } = useKnowledgeExtraction()
@@ -436,8 +437,11 @@ function App() {
       refinementStatus: snapshot.refinementStatus,
       refinementRunId: snapshot.refinementRunId,
     })
+    if (!snapshot.knowledgePoints?.length) {
+      loadDocumentKnowledge(docId).catch(() => {})
+    }
     setMode('normal')
-  }, [documents, persistedDocuments, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
+  }, [documents, loadDocumentKnowledge, persistedDocuments, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
 
   const handleOpenGeneratedDocument = useCallback(async (generatedDocId) => {
     setGeneratedDocumentPreviewLoading(true)
