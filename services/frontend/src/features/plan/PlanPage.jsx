@@ -116,6 +116,15 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
   const [generationMeta, setGenerationMeta] = useState({ taskId: '', topic: '', requirements: '' })
   const generationMetaRef = useRef(generationMeta)
   const [activeView, setActiveView] = useState('content')
+  const [skillTreeMessages, setSkillTreeMessages] = useState([])
+
+  function handleSkillTreeStep(msg) {
+    if (msg === null) {
+      setSkillTreeMessages([])
+    } else {
+      setSkillTreeMessages(prev => [...prev, msg])
+    }
+  }
 
   function updateGenerationMeta(meta) {
     generationMetaRef.current = meta
@@ -145,7 +154,7 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
     <div className="plan-page-main">
       <PlanActivityBar activeView={activeView} onViewChange={setActiveView} />
       {activeView === 'skill-tree' ? (
-        <SkillTreePanel />
+        <SkillTreePanel onStepMessage={handleSkillTreeStep} />
       ) : (
         <PlanContentArea
           plan={plan}
@@ -158,6 +167,7 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
         onProfileSave={onProfileSave}
         userId={userId}
         planStatus={plan.status}
+        skillTreeMessages={skillTreeMessages}
         onGenerate={() => dispatch({ type: 'GENERATE' })}
         onGenerationMetaChange={updateGenerationMeta}
         onAutoSaveSnapshot={saveSnapshot}

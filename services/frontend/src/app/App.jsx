@@ -708,6 +708,7 @@ function App() {
             showDeep={showDeep}
             deepLoading={deepLoading}
             deepExplanation={deepExplanation}
+            status={selectedKP ? getKpStatus(selectedKP.text) : 'unknown'}
             extracting={extracting}
             extractProgress={extractProgress}
             extractError={extractError}
@@ -720,7 +721,7 @@ function App() {
             knowledgePoints={uniqueKPs}
             stats={stats}
             getKpStatus={getKpStatus}
-            onCloseSelected={() => setSelectedKP(null)}
+            onClose={() => setSelectedKP(null)}
             onStartDeepExplain={startDeepExplain}
             onToggleKnown={toggleKnown}
             onCloseDeep={closeDeep}

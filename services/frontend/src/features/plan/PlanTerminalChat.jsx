@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { deleteDocGenTask, getWordDownloadUrl, resumeDocGen, startDocGen, streamDocGen } from '../../api/docGen'
 import { analyzeProfile } from '../../api/profile'
 import HumanReviewModal from '../doc-gen/HumanReviewModal'
@@ -26,6 +26,7 @@ function PlanTerminalChat({
   onDone,
   onReject,
   onReset,
+  skillTreeMessages = [],
 }) {
   const [messages, setMessages] = useState([
     { role: 'system', text: READY_MESSAGE },
@@ -40,6 +41,12 @@ function PlanTerminalChat({
   const [humanPayload, setHumanPayload] = useState(null)
   const stopStreamRef = useRef(null)
   const messagesEndRef = useRef(null)
+
+  useEffect(() => {
+    if (skillTreeMessages.length > 0) {
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    }
+  }, [skillTreeMessages])
 
   function addMsg(role, text) {
     setMessages(prev => [...prev, { role, text }])
@@ -236,6 +243,9 @@ function PlanTerminalChat({
       <div className="plan-terminal-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`plan-msg-${msg.role}`}>{msg.text}</div>
+        ))}
+        {skillTreeMessages.map((msg, i) => (
+          <div key={`st-${i}`} className="plan-msg-system">{msg}</div>
         ))}
         {planStatus === 'generating' && (
           <div className="plan-msg-system">

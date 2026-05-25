@@ -1,4 +1,4 @@
-import { apiFetch, clearAuthToken, postJson, setAuthToken } from './client'
+import { apiFetch, clearAuthToken, getAuthToken, postJson, setAuthToken } from './client'
 
 
 function storeSession(data) {
@@ -18,7 +18,8 @@ export async function loginUser({ account, password }) {
 
 
 export async function fetchCurrentUser() {
-  const response = await apiFetch('/api/auth/me')
+  if (!getAuthToken()) return null
+  const response = await apiFetch('/api/auth/me', { timeout: 5000 })
   if (!response.ok) throw new Error(`请求失败: ${response.status}`)
   return response.json()
 }

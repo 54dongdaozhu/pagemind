@@ -1962,15 +1962,17 @@ body.toc-resize-active .toc-resize-handle::after {
 }
 
 .plan-page-main {
+  --plan-activity-width: 44px;
   grid-column: 1 / 4;
   grid-row: 2;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--plan-activity-width) minmax(0, 65fr) minmax(0, 35fr);
   overflow: hidden;
   min-height: 0;
 }
 
 .plan-content-area {
-  flex: 0 0 65%;
+  min-width: 0;
   border-right: 1px solid #e8e8e8;
   background: var(--main-bg);
   display: flex;
@@ -2032,7 +2034,7 @@ body.toc-resize-active .toc-resize-handle::after {
 }
 
 .plan-terminal {
-  flex: 0 0 35%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: rgb(253, 253, 252);
@@ -2523,8 +2525,7 @@ body.toc-resize-active .toc-resize-handle::after {
 
 /* ── Plan Activity Bar ───────────────────────────────────────────────────── */
 .plan-activity-bar {
-  width: 44px;
-  flex-shrink: 0;
+  width: var(--plan-activity-width);
   background: #f5f4f1;
   border-right: 1px solid var(--border);
   display: flex;
@@ -2560,7 +2561,7 @@ body.toc-resize-active .toc-resize-handle::after {
 
 /* ── Skill Tree Panel ────────────────────────────────────────────────────── */
 .skill-tree-panel {
-  flex: 0 0 65%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2723,4 +2724,74 @@ body.toc-resize-active .toc-resize-handle::after {
   padding: 6px 8px;
   line-height: 1.5;
   border-left: 3px solid #4caf50;
+}
+
+/* ── Skill Tree 树形布局 ── */
+.skill-tree-group + .skill-tree-group { margin-top: 4px; }
+
+.skill-tree-cat-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 4px 2px;
+}
+.skill-tree-cat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #aaa;
+  flex-shrink: 0;
+}
+.skill-tree-cat-label {
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text-secondary, #555);
+  letter-spacing: 0.01em;
+}
+.skill-tree-cat-count {
+  font-size: 0.72rem;
+  color: var(--text-muted, #888);
+  background: #f0ede8;
+  border-radius: 10px;
+  padding: 0 6px;
+  line-height: 1.6;
+}
+.skill-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.skill-tree-child-row {
+  display: flex;
+  align-items: flex-start;
+}
+.skill-tree-connector {
+  position: relative;
+  width: 20px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.skill-tree-connector::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  border-left: 1.5px solid #ddd;
+}
+.skill-tree-connector::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  width: 12px;
+  border-bottom: 1.5px solid #ddd;
+}
+.skill-tree-child-row--last .skill-tree-connector::before {
+  bottom: auto;
+  height: 18px;
+}
+.skill-tree-child-row .skill-tree-card {
+  flex: 1;
+  min-width: 0;
 }
