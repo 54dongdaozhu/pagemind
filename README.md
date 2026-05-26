@@ -1,6 +1,6 @@
 # AI 文档学习助手
 
-> 一款面向通用文档阅读、知识整理和深度理解场景的 AI 文档学习工具，能从 docx、PDF、纯文本和 Markdown 文档中自动提取核心知识点，通过高亮 + 智能讲解帮助用户高效消化内容。
+> 一款 AI 文档学习工具，目前专注于开发者、转行者、工程实践者等技术自学场景。它能从 docx、PDF、纯文本和 Markdown 技术资料中自动提取核心知识点，通过高亮、智能讲解、RAG 问答和学习路径生成，帮助用户系统消化技术内容。
 
 ## ✨ 功能特性
 
@@ -10,6 +10,7 @@
 - 💬 **单击看简介**：点击高亮立刻显示 2-3 句精简解释
 - 📚 **双击深度讲解**：流式输出详细讲解，逐字呈现
 - 🔎 **文档 RAG 问答**：围绕当前文档检索片段并生成回答
+- 🧭 **学习计划生成**：根据技术背景和学习目标生成学习路线、技能树与阶段安排
 - 🧠 **知识掌握记录**：自动追踪理解进度，支持"已掌握"标记
 - 👁️ **隐藏已掌握**：聚焦未掌握内容，避免重复打扰
 - 💾 **跨文档持久化**：掌握记录保存在本地，多次使用不丢失
@@ -26,12 +27,12 @@
 - **Python 3.10+** + **FastAPI**：Web 框架
 - **PostgreSQL + SQLAlchemy**：生产级关系数据库与 ORM 持久化
 - **DeepSeek API**：大语言模型服务
-- **LangGraph + LangChain**：多步知识点提取流水线
+- **LangGraph + LangChain**：多步知识点提取与学习规划流水线
 - **Embedding RAG + ChromaDB**：当前文档向量检索与摘要记忆
 
 ## 🏗️ 系统架构
 
-本项目采用服务化的前后端分离架构，前端负责文档解析、阅读交互和原文高亮；API 负责 HTTP 接口、RAG 检索问答、LLM 调用；worker 负责异步任务消费；PostgreSQL 与 Redis 作为独立基础设施容器运行。
+本项目采用服务化的前后端分离架构，前端负责文档解析、阅读交互、原文高亮和学习计划界面；API 负责 HTTP 接口、RAG 检索问答、LLM 调用和学习状态管理；worker 负责异步任务消费；PostgreSQL 与 Redis 作为独立基础设施容器运行。
 
 ```mermaid
 flowchart LR
@@ -51,6 +52,7 @@ flowchart LR
         API --> Extract[知识点提取服务]
         API --> Explain[知识点讲解服务]
         API --> RAG[RAG 文档问答服务]
+        API --> Plan[学习计划服务]
         API --> Knowledge[掌握状态服务]
         API --> Redis[(Redis 队列)]
         Redis --> Worker
@@ -62,6 +64,7 @@ flowchart LR
         LangGraph --> LLM[DeepSeek / OpenAI Compatible LLM]
         Explain --> LLM
         RAG --> LLM
+        Plan --> LLM
     end
 
     subgraph Storage[存储层]
@@ -77,9 +80,9 @@ flowchart LR
 
 ### 架构说明
 
-- **前端层**：基于 React 19 + Vite，负责文档上传、文档解析、HTML 渲染、原文高亮和用户交互。
+- **前端层**：基于 React 19 + Vite，负责文档上传、文档解析、HTML 渲染、原文高亮、学习计划终端和用户交互。
 - **后端服务层**：基于 FastAPI + RQ，API 进程处理 HTTP 请求，worker 进程消费 Redis 队列中的后台任务。
-- **AI 能力层**：通过 LangGraph 将知识点提取拆分为多步流程，并统一调用 OpenAI-compatible LLM 服务。
+- **AI 能力层**：通过 LangGraph 将知识点提取、文档理解和学习规划拆分为多步流程，并统一调用 OpenAI-compatible LLM 服务。
 - **存储层**：使用 ChromaDB 存储文档向量索引，使用 PostgreSQL 保存知识点、提取缓存和文档索引元数据，使用 Redis 保存异步任务队列。
 
 ---
@@ -148,26 +151,27 @@ ai-study-tool/
 │   ├── frontend/                   # React + Vite 前端应用，生产镜像内由 nginx 托管
 │   │   ├── public/
 │   │   ├── src/
-│   │   ├── nginx.conf
+│   │   │   ├── api/                # 前端 API 封装
+│   │   │   ├── app/                # 应用入口与主状态
+│   │   │   ├── features/           # 文档、知识点、问答、计划、画像等功能模块
+│   │   │   └── styles/
 │   │   ├── package.json
 │   │   └── vite.config.js
-│   └── backend/                    # FastAPI API 与 RQ worker 共用代码
-│       ├── main.py                 # uvicorn main:app 兼容入口
-│       ├── worker.py               # RQ worker 入口
-│       ├── requirements.txt
-│       ├── app/
-│       │   ├── main.py             # FastAPI 创建、CORS、路由注册
-│       │   ├── core/               # 配置、数据库模型与连接
-│       │   ├── routers/            # HTTP API 路由
-│       │   ├── services/           # 核心业务服务与队列封装
-│       │   ├── agents/             # LangGraph 学习 Agent
-│       │   ├── schemas/
-│       │   └── models/
-│       └── alembic/                # 数据库迁移
+│   ├── backend/                    # FastAPI API 与 RQ worker 共用代码
+│   │   ├── main.py                 # uvicorn main:app 兼容入口
+│   │   ├── worker.py               # RQ worker 入口
+│   │   ├── requirements.txt
+│   │   ├── app/
+│   │   │   ├── main.py             # FastAPI 创建、CORS、路由注册
+│   │   │   ├── core/               # 配置、数据库模型与连接
+│   │   │   ├── modules/            # auth、agent、rag、knowledge、plan、profile 等业务模块
+│   │   │   └── shared/             # LLM、缓存、日志、队列等共享能力
+│   │   └── alembic/                # 数据库迁移
+│   └── multi-agents/               # 技术学习材料生成服务
 ├── docs/
 │   └── service-design.md           # 服务边界与容器设计
 ├── test-docs/                      # 本地测试文档样例
-├── docker-compose.yml              # backend/frontend/worker/postgres/redis 编排
+├── docker-compose.yml              # backend/frontend/worker/multi-agents/postgres/redis 编排
 ├── docker-compose.override.yml     # 开发模式热加载覆盖
 ├── docker-compose.deploy.yml       # 服务器镜像部署编排
 └── README.md
@@ -234,10 +238,11 @@ docker compose -f docker-compose.yml up -d --build
 - `backend`：`uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}`
 - `worker`：`python worker.py`
 - `frontend`：nginx 静态服务 + `/api/` 反向代理到 `backend:8000`
+- `multi-agents`：技术学习材料生成服务，提供 `/api/doc-gen/*`
 - `postgres`：独立 PostgreSQL 数据库
 - `redis`：独立 Redis 队列服务
 
-PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，Redis 会持久化到 `ai-study-tool_redis-data`，ChromaDB 向量库会持久化到 `ai-study-tool_backend-data`。查看日志：
+PostgreSQL 数据库会持久化到 Docker volume `ai-study-tool_postgres-data`，Redis 会持久化到 `ai-study-tool_redis-data`，ChromaDB 向量库会持久化到 `ai-study-tool_backend-data`，生成的 Word 文件会持久化到 `ai-study-tool_doc-gen-files`。查看日志：
 
 ```bash
 docker compose -f docker-compose.yml logs -f
@@ -269,6 +274,7 @@ docker compose -f docker-compose.yml down -v
 ```text
 ghcr.io/54dongdaozhu/pagemind-backend:latest
 ghcr.io/54dongdaozhu/pagemind-frontend:latest
+ghcr.io/54dongdaozhu/pagemind-multi-agents:latest
 ```
 
 要启用自动部署，需要在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中配置：
@@ -422,6 +428,15 @@ npm run dev
 | 点"标记已掌握" | 该知识点变绿+删除线，不再打扰 |
 | 切换"隐藏已掌握" | 已掌握的不显示高亮 |
 
+### 技术学习规划
+
+| 操作 | 效果 |
+|------|------|
+| 填写技术背景 | 生成用于学习计划的用户画像 |
+| 输入学习主题 | 生成学习目标、技能树和阶段路线 |
+| 补充学习要求 | 控制深度、实践方向和时间安排 |
+| 保存生成内容 | 将技术学习材料保存到个人中心 |
+
 ### 高亮颜色含义
 
 - 🟡 **黄色**：术语（未掌握）
@@ -438,6 +453,10 @@ npm run dev
 | `/api/rag/query` | POST | 检索当前文档并生成问答 |
 | `/api/agent/chat` | POST | 调用学习 Agent 进行对话 |
 | `/api/agent/tools` | GET | 查看 Agent 可用工具 |
+| `/api/plan/chat` | POST | 根据用户背景生成技术学习计划或回答学习规划问题 |
+| `/api/profile/me` | GET | 读取当前用户技术学习画像 |
+| `/api/profile/analyze` | POST | 分析背景信息并更新技术学习画像 |
+| `/api/generated-documents` | GET/POST | 保存和读取生成的技术学习材料快照 |
 | `/api/explain-deep` | POST | 流式生成深度讲解 |
 | `/api/knowledge/click` | POST | 上报知识点点击 |
 | `/api/knowledge/mark-known` | POST | 标记为已掌握 |
@@ -507,7 +526,7 @@ known(已掌握)
 - [ ] 知识笔记导出（Markdown）
 - [ ] 知识点之间的关联推荐
 - [ ] 回看提醒（间隔重复算法）
-- [ ] 多文档管理面板
+- [ ] 面向技术栈的多文档学习项目管理
 - [ ] PDF OCR 与复杂版式支持
 
 ## 📝 开发说明
