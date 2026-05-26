@@ -34,6 +34,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [mode, setMode] = useState('normal')
+  const [planActiveView, setPlanActiveView] = useState('content')
   const [userProfile, setUserProfile] = useState(null)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [selectedKP, setSelectedKP] = useState(null)
@@ -654,6 +655,11 @@ function App() {
 
   const appClassName = `app${tocOpen ? '' : ' toc-collapsed'}${tocResizing ? ' toc-resizing' : ''}`
 
+  const openSkillTree = () => {
+    setPlanActiveView('skill-tree')
+    setMode('plan')
+  }
+
   return (
     <div
       className={appClassName}
@@ -748,12 +754,20 @@ function App() {
           generatedDocumentPreviewError={generatedDocumentPreviewError}
           onOpenDocument={handleOpenPersistedDocument}
           onOpenGeneratedDocument={handleOpenGeneratedDocument}
+          onOpenSkillTree={openSkillTree}
           onLogout={handleLogout}
         />
       </div>
 
       <div className={`mode-pane${mode === 'plan' ? ' active' : ''}`} aria-hidden={mode !== 'plan'}>
-        <PlanPage userProfile={userProfile} profileLoaded={profileLoaded} onProfileSave={setUserProfile} userId={currentUser?.user_id} />
+        <PlanPage
+          userProfile={userProfile}
+          profileLoaded={profileLoaded}
+          onProfileSave={setUserProfile}
+          userId={currentUser?.user_id}
+          activeView={planActiveView}
+          onViewChange={setPlanActiveView}
+        />
       </div>
 
       <div className={`mode-pane${mode === 'complete' ? ' active' : ''}`} aria-hidden={mode !== 'complete'}>

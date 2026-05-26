@@ -111,11 +111,10 @@ function PlanContentArea({ plan, onReset, onSaveSnapshot }) {
 
 // ── 分屏主界面 ────────────────────────────────────────────────────────────────
 
-function PlanMain({ userProfile, onProfileSave, userId }) {
+function PlanMain({ userProfile, onProfileSave, userId, activeView, onViewChange }) {
   const [plan, dispatch] = useReducer(planReducer, PLAN_INIT)
   const [generationMeta, setGenerationMeta] = useState({ taskId: '', topic: '', requirements: '' })
   const generationMetaRef = useRef(generationMeta)
-  const [activeView, setActiveView] = useState('content')
   const [skillTreeMessages, setSkillTreeMessages] = useState([])
 
   function handleSkillTreeStep(msg) {
@@ -152,7 +151,7 @@ function PlanMain({ userProfile, onProfileSave, userId }) {
 
   return (
     <div className="plan-page-main">
-      <PlanActivityBar activeView={activeView} onViewChange={setActiveView} />
+      <PlanActivityBar activeView={activeView} onViewChange={onViewChange} />
       {activeView === 'skill-tree' ? (
         <SkillTreePanel onStepMessage={handleSkillTreeStep} />
       ) : (
@@ -237,10 +236,18 @@ function PlanOnboarding({ onProfileSave }) {
 
 // ── 入口 ──────────────────────────────────────────────────────────────────────
 
-function PlanPage({ userProfile, profileLoaded, onProfileSave, userId }) {
+function PlanPage({ userProfile, profileLoaded, onProfileSave, userId, activeView, onViewChange }) {
   if (!profileLoaded) return null
   if (!userProfile)   return <PlanOnboarding onProfileSave={onProfileSave} />
-  return <PlanMain userProfile={userProfile} onProfileSave={onProfileSave} userId={userId} />
+  return (
+    <PlanMain
+      userProfile={userProfile}
+      onProfileSave={onProfileSave}
+      userId={userId}
+      activeView={activeView}
+      onViewChange={onViewChange}
+    />
+  )
 }
 
 export default PlanPage

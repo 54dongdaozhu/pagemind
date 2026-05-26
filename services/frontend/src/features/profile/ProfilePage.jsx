@@ -27,6 +27,7 @@ function ProfilePage({
   generatedDocumentPreviewError = '',
   onOpenDocument,
   onOpenGeneratedDocument,
+  onOpenSkillTree,
   onLogout,
 }) {
   const [section, setSection] = useState('documents')
@@ -40,6 +41,9 @@ function ProfilePage({
           </div>
           <div className="profile-username">{user?.username || '—'}</div>
           <div className="profile-email">{user?.email}</div>
+          <button type="button" className="profile-skill-tree-btn" onClick={onOpenSkillTree}>
+            技能树
+          </button>
           <button type="button" className="profile-logout-btn" onClick={onLogout}>
             退出登录
           </button>
