@@ -146,6 +146,7 @@ class ChunkKnowledgePoint(Base):
     chunk_index = Column(Integer, primary_key=True)
     kp_id = Column(String(32), ForeignKey("knowledge_points.kp_id"), primary_key=True)
     confidence = Column(Float)
+    has_explanation = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 

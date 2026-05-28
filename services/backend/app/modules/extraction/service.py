@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import BoundedSemaphore, RLock
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.modules.agent.knowledge_agents import discover_knowledge_points, finalize_knowledge_items, refine_document_knowledge
 from app.core.config import EXTRACT_MAX_CONCURRENCY
@@ -111,6 +111,7 @@ def _load_doc_kps_from_db(user_id: str, doc_id: str) -> list[dict]:
             "explanation": kp.explanation or "",
             "importance": kp.importance or "medium",
             "chunk_index": link.chunk_index,
+            "has_explanation": link.has_explanation,
         }
         for link, kp in rows
         if kp.kp_text
@@ -175,13 +176,17 @@ def _dedupe_doc_kps(items: list[dict]) -> list[dict]:
                 "explanation": item.get("explanation") or "",
                 "importance": item.get("importance") or "medium",
                 "chunk_index": item.get("chunk_index"),
+                "has_explanation": item.get("has_explanation"),
             }
-        elif existing.get("importance") != "high" and item.get("importance") == "high":
-            existing["importance"] = "high"
-            if item.get("explanation"):
-                existing["explanation"] = item["explanation"]
-            if item.get("chunk_index") is not None:
-                existing["chunk_index"] = item["chunk_index"]
+        else:
+            if existing.get("importance") != "high" and item.get("importance") == "high":
+                existing["importance"] = "high"
+                if item.get("explanation"):
+                    existing["explanation"] = item["explanation"]
+                if item.get("chunk_index") is not None:
+                    existing["chunk_index"] = item["chunk_index"]
+            if existing.get("has_explanation") is None and item.get("has_explanation") is not None:
+                existing["has_explanation"] = item["has_explanation"]
 
     result = []
     for item in merged.values():
@@ -238,6 +243,50 @@ def _wait_for_rag_ready(user_id: str, doc_id: str) -> bool:
             return False
         time.sleep(_RAG_READY_POLL_SECONDS)
     return False
+
+
+def _persist_phase2_results(user_id: str, doc_id: str, refined: list[dict]) -> None:
+    """将 Phase 2 精炼结果回写 DB：importance 只升级不降级，has_explanation 按文档更新。"""
+    if not refined:
+        return
+
+    storage_doc_id = scoped_doc_id(user_id, doc_id)
+    now = datetime.now(timezone.utc)
+
+    high_texts = [kp["text"] for kp in refined if kp.get("importance") == "high" and kp.get("text")]
+    has_expl_items = [
+        (kp["text"], kp["has_explanation"])
+        for kp in refined
+        if kp.get("text") and kp.get("has_explanation") is not None
+    ]
+
+    with _extract_db_lock:
+        with get_db() as db:
+            if high_texts:
+                db.execute(
+                    update(KnowledgePointRow)
+                    .where(KnowledgePointRow.kp_text.in_(high_texts))
+                    .where(KnowledgePointRow.importance != "high")
+                    .values(importance="high", updated_at=now)
+                )
+
+            if has_expl_items:
+                texts = [text for text, _ in has_expl_items]
+                kp_rows = db.execute(
+                    select(KnowledgePointRow.kp_id, KnowledgePointRow.kp_text)
+                    .where(KnowledgePointRow.kp_text.in_(texts))
+                ).all()
+                text_to_id = {row.kp_text: row.kp_id for row in kp_rows}
+                has_expl_by_text = dict(has_expl_items)
+                for text, kp_id in text_to_id.items():
+                    db.execute(
+                        update(ChunkKnowledgePoint)
+                        .where(ChunkKnowledgePoint.doc_id == storage_doc_id)
+                        .where(ChunkKnowledgePoint.kp_id == kp_id)
+                        .values(has_explanation=has_expl_by_text[text])
+                    )
+
+            db.commit()
 
 
 def _enrich_refined_kp_metadata(refined: list[dict], source_kps: list[dict]) -> list[dict]:
@@ -542,6 +591,10 @@ def run_phase2_and_save(
         refined = refine_document_knowledge(user_id, doc_id, all_chunk_kps)
         refined = _enrich_refined_kp_metadata(refined, all_chunk_kps)
         save_refined_doc_kps(user_id, doc_id, refined)
+        try:
+            _persist_phase2_results(user_id, doc_id, refined)
+        except Exception as e:
+            logger.exception("[Phase2] DB persist failed (Redis result is intact): %s", e)
         status = "completed" if rag_ready else "degraded"
         progress.update({
             "status": status,
