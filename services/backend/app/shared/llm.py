@@ -1,6 +1,5 @@
 import json
 import logging
-import threading
 import time
 
 import requests
@@ -12,11 +11,14 @@ from app.core.config import (
     FALLBACK_LLM_API_KEY,
     FALLBACK_LLM_BASE_URL,
     FALLBACK_LLM_MODEL,
+    LLM_CIRCUIT_FAILURE_THRESHOLD,
+    LLM_CIRCUIT_RECOVERY_SECONDS,
     VISION_LLM_API_KEY,
     VISION_LLM_BASE_URL,
     VISION_LLM_MODEL,
 )
 from app.shared.cache import PROMPT_CACHE_TTL_SECONDS, get_text, set_text, stable_hash
+from app.shared.circuit_breaker import CircuitBreaker, CircuitOpenError
 from app.shared import db_log
 
 logger = logging.getLogger(__name__)
@@ -29,37 +31,11 @@ _PROVIDER = "deepseek"
 _MODEL = "deepseek-chat"
 
 
-class _CircuitBreaker:
-    _FAILURE_THRESHOLD = 5
-    _RECOVERY_TIMEOUT = 30.0
-
-    def __init__(self):
-        self._failures = 0
-        self._opened_at: float | None = None
-        self._lock = threading.Lock()
-
-    def is_open(self) -> bool:
-        with self._lock:
-            if self._opened_at is None:
-                return False
-            if time.monotonic() - self._opened_at >= self._RECOVERY_TIMEOUT:
-                return False  # HALF_OPEN: let one probe through
-            return True
-
-    def record_success(self):
-        with self._lock:
-            self._failures = 0
-            self._opened_at = None
-
-    def record_failure(self):
-        with self._lock:
-            self._failures += 1
-            if self._failures >= self._FAILURE_THRESHOLD:
-                self._opened_at = time.monotonic()
-                logger.warning("[CircuitBreaker] LLM circuit opened after %d failures", self._failures)
-
-
-_breaker = _CircuitBreaker()
+_breaker = CircuitBreaker(
+    name="llm",
+    failure_threshold=LLM_CIRCUIT_FAILURE_THRESHOLD,
+    recovery_timeout=LLM_CIRCUIT_RECOVERY_SECONDS,
+)
 
 
 def _http_chat_completion(
@@ -103,7 +79,9 @@ def call_deepseek(
     if cached is not None:
         return cached
 
-    if _breaker.is_open():
+    try:
+        _breaker.before_call()
+    except CircuitOpenError:
         raise HTTPException(status_code=503, detail="LLM 服务暂时不可用，请稍后重试。")
 
     start = time.monotonic()
@@ -164,7 +142,12 @@ def call_deepseek(
             error_details={"error": str(e)},
         )
         raise HTTPException(status_code=503, detail=f"LLM 调用失败: {str(e)}")
+    except HTTPException as e:
+        if e.status_code >= 500:
+            _breaker.record_failure()
+        raise
     except (KeyError, IndexError) as e:
+        _breaker.record_failure()
         raise HTTPException(status_code=500, detail=f"LLM 返回格式异常: {str(e)}")
 
 
@@ -228,7 +211,9 @@ def call_deepseek_stream(
         yield from _stream_cached_text(cached)
         return
 
-    if _breaker.is_open():
+    try:
+        _breaker.before_call()
+    except CircuitOpenError:
         yield "\n\n[错误] LLM 服务暂时不可用，请稍后重试。"
         return
 

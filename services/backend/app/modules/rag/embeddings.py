@@ -2,14 +2,26 @@ import logging
 
 import requests
 
-from app.core.config import EMBEDDING_API_KEY, EMBEDDING_BASE_URL, EMBEDDING_MODEL
+from app.core.config import (
+    EMBEDDING_API_KEY,
+    EMBEDDING_BASE_URL,
+    EMBEDDING_CIRCUIT_FAILURE_THRESHOLD,
+    EMBEDDING_CIRCUIT_RECOVERY_SECONDS,
+    EMBEDDING_MODEL,
+)
 from app.shared.cache import EMBEDDING_CACHE_TTL_SECONDS, get_json_many, set_json_many, stable_hash
+from app.shared.circuit_breaker import CircuitBreaker, CircuitOpenError
 from app.shared.llm import REQUEST_PROXIES
 
 
 logger = logging.getLogger(__name__)
 
 _EMBED_BATCH_SIZE = 100
+_embedding_breaker = CircuitBreaker(
+    name="embedding",
+    failure_threshold=EMBEDDING_CIRCUIT_FAILURE_THRESHOLD,
+    recovery_timeout=EMBEDDING_CIRCUIT_RECOVERY_SECONDS,
+)
 
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:
@@ -32,14 +44,19 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
             return None
         return cached_embeddings
 
+    try:
+        _embedding_breaker.before_call()
+    except CircuitOpenError as exc:
+        logger.warning(
+            "Embedding skipped: circuit is open retry_after=%.1fs missing=%d",
+            exc.retry_after_seconds,
+            len(missing_indexes),
+        )
+        return None
+
     missing_texts = [cleaned[idx] for idx in missing_indexes]
 
     url = f"{EMBEDDING_BASE_URL.rstrip('/')}/embeddings"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {EMBEDDING_API_KEY}",
-    }
-
     try:
         all_new_embeddings: list[list[float]] = []
         for batch_start in range(0, len(missing_texts), _EMBED_BATCH_SIZE):
@@ -75,7 +92,9 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
             len(missing_texts),
             len(all_new_embeddings[0]) if all_new_embeddings else 0,
         )
+        _embedding_breaker.record_success()
         return cached_embeddings
     except Exception as exc:
+        _embedding_breaker.record_failure()
         logger.exception("Embedding request exception: %s", exc)
         return None
