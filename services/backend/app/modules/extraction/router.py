@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.database import User
-from app.shared.schemas import (
+from app.modules.extraction.schemas import (
     DocKPResponse,
     ExtractBatchRequest,
     ExtractBatchResponse,
@@ -15,16 +15,13 @@ from app.shared.schemas import (
     KnowledgePoint,
 )
 from app.modules.auth.service import get_current_user
+from app.modules.extraction.repository import get_persisted_doc_kps, get_refined_doc_kps
+from app.modules.extraction.refinement import get_extraction_status, get_refinement_status, start_knowledge_extraction_run
 from app.modules.extraction.service import (
     extract_knowledge_batch,
     extract_knowledge_for_document,
     extract_knowledge_from_text,
     finalize_knowledge_extraction,
-    get_persisted_doc_kps,
-    get_refined_doc_kps,
-    get_refinement_status,
-    get_extraction_status,
-    start_knowledge_extraction_run,
 )
 
 
