@@ -1,7 +1,15 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 
-from app.shared.schemas import ChatRequest, ChatResponse
 from app.shared.llm import call_deepseek
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+class ChatResponse(BaseModel):
+    reply: str
 
 
 router = APIRouter(tags=["health"])

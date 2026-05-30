@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.database import User
-from app.shared.schemas import ClickRequest, MarkKnownRequest, StatusBatchRequest, UnmarkKnownRequest
+from app.modules.knowledge.schemas import ClickRequest, MarkKnownRequest, StatusBatchRequest, UnmarkKnownRequest
 from app.modules.auth.service import get_current_user
 from app.modules.knowledge import service as knowledge_service
 

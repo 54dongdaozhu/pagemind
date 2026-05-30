@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.shared.schemas import ExplainDeepRequest
+from app.modules.explain.schemas import ExplainDeepRequest
 from app.modules.explain.service import stream_deep_explanation
 
 

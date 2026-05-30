@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from app.core.database import User
 from app.modules.agent.learning_agents import run_learning_agents, stream_learning_agents
 from app.modules.agent.tool_registry import list_tools
-from app.shared.schemas import AgentChatRequest, AgentChatResponse
+from app.modules.agent.schemas import AgentChatRequest, AgentChatResponse
 from app.shared import db_log
 from app.modules.auth.service import get_current_user
 

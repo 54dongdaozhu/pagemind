@@ -1,6 +1,6 @@
 from typing import Literal, TypedDict
 
-from app.shared.schemas import RagSource
+from app.modules.rag.schemas import RagSource
 
 
 class KnowledgeAgentState(TypedDict):
