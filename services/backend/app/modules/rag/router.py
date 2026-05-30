@@ -3,7 +3,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.database import User
-from app.shared.schemas import (
+from app.modules.rag.schemas import (
     DocTypeStatusResponse,
     DocumentListResponse,
     DocumentRenderResponse,
@@ -17,7 +17,8 @@ from app.shared import db_log
 from app.modules.auth.service import get_current_user
 from app.modules.rag import answer_with_rag, index_document_text
 from app.modules.rag.repository import get_persisted_document_render, list_persisted_documents
-from app.modules.rag.service import get_doc_type_status, get_rag_enrichment_status
+from app.modules.rag.service import get_rag_enrichment_status
+from app.modules.rag.doc_type import get_doc_type_status
 
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])

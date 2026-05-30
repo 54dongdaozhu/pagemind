@@ -1,7 +1,7 @@
 import chromadb
 
 from app.core.config import CHROMA_PATH
-from app.shared.schemas import RagSource
+from app.modules.rag.schemas import RagSource
 from app.modules.rag.embeddings import embed_texts
 
 
