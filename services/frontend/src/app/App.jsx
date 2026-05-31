@@ -346,8 +346,29 @@ function App() {
     setDocumentRenderToken(token => token + 1)
   }, [activeDoc, docLoaded, mode])
 
+  const maybeExtractMissingKnowledge = useCallback(async (doc) => {
+    if (!doc?.id || !doc?.html) return
+    const data = await loadDocumentKnowledge(doc.id)
+    const hasKnowledge = (data?.knowledge_points || []).length > 0
+    const status = data?.refinement_status || 'not_started'
+    const alreadyRunning = status === 'queued' || status === 'running'
+    if (hasKnowledge || alreadyRunning) return
+
+    const chunks = splitIntoChunks(doc.html)
+    if (!chunks.length) return
+    extractAllChunks(doc.html, doc.id, { chunks, title: doc.name }).catch(err => {
+      console.error('历史文档知识点重新提取失败:', err)
+    })
+  }, [extractAllChunks, loadDocumentKnowledge])
+
   const handleSelectDocument = useCallback(async (docId) => {
-    if (docId === activeDocId && docLoaded) return
+    if (docId === activeDocId && docLoaded) {
+      const currentDoc = documents.find(item => item.id === docId)
+      if (!knowledgePoints.length && !extracting) {
+        maybeExtractMissingKnowledge(currentDoc).catch(() => {})
+      }
+      return
+    }
     let doc = documents.find(item => item.id === docId)
     if (!doc) return
 
@@ -390,7 +411,21 @@ function App() {
       refinementStatus: snapshot.refinementStatus,
       refinementRunId: snapshot.refinementRunId,
     })
-  }, [activeDocId, docLoaded, documents, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
+    if (!snapshot.knowledgePoints?.length) {
+      maybeExtractMissingKnowledge(doc).catch(() => {})
+    }
+  }, [
+    activeDocId,
+    docLoaded,
+    documents,
+    extracting,
+    knowledgePoints.length,
+    maybeExtractMissingKnowledge,
+    resetDeep,
+    resetExtraction,
+    restoreExtraction,
+    showParsedDocument,
+  ])
 
   const handleOpenPersistedDocument = useCallback(async (docId) => {
     const persisted = persistedDocuments.find(item => item.id === docId)
@@ -439,10 +474,18 @@ function App() {
       refinementRunId: snapshot.refinementRunId,
     })
     if (!snapshot.knowledgePoints?.length) {
-      loadDocumentKnowledge(docId).catch(() => {})
+      maybeExtractMissingKnowledge(doc).catch(() => {})
     }
     setMode('normal')
-  }, [documents, loadDocumentKnowledge, persistedDocuments, resetDeep, resetExtraction, restoreExtraction, showParsedDocument])
+  }, [
+    documents,
+    maybeExtractMissingKnowledge,
+    persistedDocuments,
+    resetDeep,
+    resetExtraction,
+    restoreExtraction,
+    showParsedDocument,
+  ])
 
   const handleOpenGeneratedDocument = useCallback(async (generatedDocId) => {
     setGeneratedDocumentPreviewLoading(true)

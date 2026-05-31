@@ -43,6 +43,10 @@ _llm_slots = BoundedSemaphore(EXTRACT_MAX_CONCURRENCY)
 _extraction_executor = ThreadPoolExecutor(max_workers=EXTRACT_MAX_CONCURRENCY)
 
 
+class KnowledgeExtractionError(RuntimeError):
+    pass
+
+
 def extract_knowledge_from_text(
     user_id: str,
     chunk_id: str,
@@ -80,7 +84,7 @@ def extract_knowledge_from_text(
     except Exception as e:
         logger.exception("Knowledge agent extraction failed: %s", e)
         _record_extraction_chunk_error(run_id, doc_id, chunk_index, str(e))
-        knowledge_points = []
+        raise KnowledgeExtractionError("知识点提取模型调用失败，请检查模型额度或 API Key 后重试。") from e
 
     with _extract_cache_lock:
         _extract_cache[cache_key] = knowledge_points

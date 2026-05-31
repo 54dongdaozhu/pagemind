@@ -496,9 +496,16 @@ def _persist_or_enqueue(
     save_cache: bool = False,
 ) -> None:
     payload = [kp.model_dump() for kp in knowledge_points]
-    args = (user_id, chunk_id, cache_key, payload, doc_id, chunk_index, save_cache)
+    if save_cache:
+        try:
+            _save_to_cache(cache_key, knowledge_points)
+        except Exception as e:
+            logger.exception("Saving extracted knowledge cache failed for chunk %s: %s", chunk_id, e)
+
+    args = (user_id, chunk_id, cache_key, payload, doc_id, chunk_index, False)
     if enqueue_job(persist_extraction_result, *args):
         return
+
     try:
         persist_extraction_result(*args)
     except Exception as e:

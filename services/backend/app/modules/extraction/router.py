@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.database import User
 from app.modules.extraction.schemas import (
@@ -18,6 +18,7 @@ from app.modules.auth.service import get_current_user
 from app.modules.extraction.repository import get_persisted_doc_kps, get_refined_doc_kps
 from app.modules.extraction.refinement import get_extraction_status, get_refinement_status, start_knowledge_extraction_run
 from app.modules.extraction.service import (
+    KnowledgeExtractionError,
     extract_knowledge_batch,
     extract_knowledge_for_document,
     extract_knowledge_from_text,
@@ -47,14 +48,17 @@ def extract_knowledge(
     request: ExtractRequest,
     current_user: User = Depends(get_current_user),
 ):
-    return extract_knowledge_from_text(
-        current_user.user_id,
-        request.chunk_id,
-        request.text,
-        doc_id=request.doc_id,
-        chunk_index=request.chunk_index,
-        run_id=request.run_id,
-    )
+    try:
+        return extract_knowledge_from_text(
+            current_user.user_id,
+            request.chunk_id,
+            request.text,
+            doc_id=request.doc_id,
+            chunk_index=request.chunk_index,
+            run_id=request.run_id,
+        )
+    except KnowledgeExtractionError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/extract-knowledge-batch", response_model=ExtractBatchResponse)
@@ -62,7 +66,10 @@ def extract_knowledge_batch_route(
     request: ExtractBatchRequest,
     current_user: User = Depends(get_current_user),
 ):
-    return extract_knowledge_batch(current_user.user_id, request.chunks, run_id=request.run_id)
+    try:
+        return extract_knowledge_batch(current_user.user_id, request.chunks, run_id=request.run_id)
+    except KnowledgeExtractionError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/extract-knowledge/finalize", response_model=ExtractStatusResponse)
@@ -70,12 +77,15 @@ def finalize_extract_knowledge(
     request: ExtractFinalizeRequest,
     current_user: User = Depends(get_current_user),
 ):
-    return finalize_knowledge_extraction(
-        current_user.user_id,
-        request.run_id,
-        request.doc_id,
-        request.chunks,
-    )
+    try:
+        return finalize_knowledge_extraction(
+            current_user.user_id,
+            request.run_id,
+            request.doc_id,
+            request.chunks,
+        )
+    except KnowledgeExtractionError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.get("/extract-knowledge/status", response_model=ExtractStatusResponse)
@@ -91,14 +101,17 @@ def extract_knowledge_document_route(
     request: ExtractDocumentRequest,
     current_user: User = Depends(get_current_user),
 ):
-    return extract_knowledge_for_document(
-        current_user.user_id,
-        request.doc_id,
-        text=request.text,
-        title=request.title,
-        chunk_size=request.chunk_size,
-        chunk_overlap=request.chunk_overlap,
-    )
+    try:
+        return extract_knowledge_for_document(
+            current_user.user_id,
+            request.doc_id,
+            text=request.text,
+            title=request.title,
+            chunk_size=request.chunk_size,
+            chunk_overlap=request.chunk_overlap,
+        )
+    except KnowledgeExtractionError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.get("/doc-kps", response_model=DocKPResponse)
