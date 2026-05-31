@@ -421,7 +421,7 @@ def _confidence_for_importance(importance: str) -> float:
 # ── Phase 2 DB update ──────────────────────────────────────────────────────────
 
 def _persist_phase2_results(user_id: str, doc_id: str, refined: list[dict]) -> None:
-    """将 Phase 2 精炼结果回写 DB：importance 只升级不降级，has_explanation 按文档更新。"""
+    """将 Phase 2 精炼结果回写 DB：importance 只升级不降级，explanation 和 has_explanation 按文档更新。"""
     if not refined:
         return
 
@@ -429,6 +429,11 @@ def _persist_phase2_results(user_id: str, doc_id: str, refined: list[dict]) -> N
     now = datetime.now(timezone.utc)
 
     high_texts = [kp["text"] for kp in refined if kp.get("importance") == "high" and kp.get("text")]
+    explanation_items = [
+        (kp["text"], str(kp["explanation"]).strip())
+        for kp in refined
+        if kp.get("text") and str(kp.get("explanation") or "").strip()
+    ]
     has_expl_items = [
         (kp["text"], kp["has_explanation"])
         for kp in refined
@@ -443,6 +448,13 @@ def _persist_phase2_results(user_id: str, doc_id: str, refined: list[dict]) -> N
                     .where(KnowledgePointRow.kp_text.in_(high_texts))
                     .where(KnowledgePointRow.importance != "high")
                     .values(importance="high", updated_at=now)
+                )
+
+            for text, explanation in explanation_items:
+                db.execute(
+                    update(KnowledgePointRow)
+                    .where(KnowledgePointRow.kp_text == text)
+                    .values(explanation=explanation, updated_at=now)
                 )
 
             if has_expl_items:
