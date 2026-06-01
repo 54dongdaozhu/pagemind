@@ -34,7 +34,7 @@ function markTextNode(textNode, pendingItems, getStatus, highlightedIds) {
   let currentNode = textNode
   let markedCount = 0
 
-  while (currentNode && pendingItems.size > 0) {
+  while (currentNode) {
     const text = currentNode.nodeValue
     const match = findFirstPendingMatch(text, pendingItems)
     if (!match) return markedCount
@@ -53,7 +53,6 @@ function markTextNode(textNode, pendingItems, getStatus, highlightedIds) {
     if (afterNode) parent.insertBefore(afterNode, currentNode)
     parent.removeChild(currentNode)
 
-    pendingItems.delete(kp.id)
     highlightedIds.add(kp.id)
     markedCount += 1
     currentNode = afterNode

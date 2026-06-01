@@ -1229,23 +1229,34 @@ body.toc-resize-active .toc-resize-handle::after {
 
 /* ========== 知识点高亮 ========== */
 .kp-highlight {
-  background: #FEF08A;
-  padding: 1px 2px;
+  background: transparent;
+  padding: 0;
   border-radius: 3px;
   cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, box-shadow 0.15s, font-weight 0.15s;
 }
 
 .kp-highlight:hover {
+  background: transparent;
+  box-shadow: none;
+  font-weight: 700;
+}
+
+.kp-highlight.kp-high {
+  background: #FEF08A;
+  padding: 1px 2px;
+}
+
+.kp-highlight.kp-high:hover {
   background: #FDE047;
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
-.kp-highlight-formula {
+.kp-highlight-formula.kp-high {
   background: #FED7AA;
 }
 
-.kp-highlight-formula:hover {
+.kp-highlight-formula.kp-high:hover {
   background: #FDBA74;
 }
 
@@ -1260,7 +1271,7 @@ body.toc-resize-active .toc-resize-handle::after {
 }
 
 /* 已掌握状态 */
-.document-content mark.kp-status-known {
+.document-content mark.kp-status-known.kp-high {
   background: #DCFCE7;
   color: #86868b;
   text-decoration: line-through;
@@ -1268,17 +1279,17 @@ body.toc-resize-active .toc-resize-handle::after {
   text-decoration-thickness: 1px;
 }
 
-.document-content mark.kp-status-known:hover {
+.document-content mark.kp-status-known.kp-high:hover {
   background: #BBF7D0;
   color: #555;
 }
 
 /* 理解中状态 */
-.document-content mark.kp-status-learning {
+.document-content mark.kp-status-learning.kp-high {
   background: #FEF9C3;
 }
 
-.document-content mark.kp-status-learning.kp-highlight-formula {
+.document-content mark.kp-status-learning.kp-highlight-formula.kp-high {
   background: #FFEDD5;
 }
 
