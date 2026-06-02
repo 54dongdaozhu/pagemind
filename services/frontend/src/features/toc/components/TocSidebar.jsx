@@ -29,6 +29,27 @@ function TocSidebar({
   const collapsedIds = useMemo(() => {
     return collapsedState.signature === tocSignature ? collapsedState.ids : new Set()
   }, [collapsedState, tocSignature])
+  const previousTocOpenRef = useRef(tocOpen)
+  const previousTocSectionOpenRef = useRef(tocSectionOpen)
+
+  const collapseTopLevelItems = useCallback(() => {
+    setCollapsedState(prev => {
+      if (!tocSignature) return prev
+
+      const next = prev.signature === tocSignature ? new Set(prev.ids) : new Set()
+      let changed = false
+
+      tocItems.forEach((item, index) => {
+        if (item.level !== 1 || !(tocItems[index + 1]?.level > item.level)) return
+        if (!next.has(item.id)) {
+          next.add(item.id)
+          changed = true
+        }
+      })
+
+      return changed ? { signature: tocSignature, ids: next } : prev
+    })
+  }, [tocItems, tocSignature])
 
   const decoratedItems = useMemo(() => {
     const collapsedAncestors = []
@@ -73,6 +94,18 @@ function TocSidebar({
       }
     })
   }
+
+  useEffect(() => {
+    const wasOpen = previousTocOpenRef.current
+    previousTocOpenRef.current = tocOpen
+    if (!wasOpen && tocOpen) collapseTopLevelItems()
+  }, [collapseTopLevelItems, tocOpen])
+
+  useEffect(() => {
+    const wasOpen = previousTocSectionOpenRef.current
+    previousTocSectionOpenRef.current = tocSectionOpen
+    if (!wasOpen && tocSectionOpen) collapseTopLevelItems()
+  }, [collapseTopLevelItems, tocSectionOpen])
 
   const clampWidth = useCallback((nextWidth) => {
     return Math.min(maxWidth, Math.max(minWidth, nextWidth))
