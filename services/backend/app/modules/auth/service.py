@@ -123,7 +123,12 @@ def user_to_dict(user: User) -> dict:
 def create_refresh_token(user: User) -> str:
     token = secrets.token_urlsafe(32)
     key = f"auth:refresh:{stable_hash(token)}"
-    set_text(key, json.dumps({"user_id": user.user_id, "issued_at": int(datetime.now(timezone.utc).timestamp())}), REFRESH_TOKEN_TTL_SECONDS)
+    set_text(
+        key,
+        json.dumps({"user_id": user.user_id, "issued_at": int(datetime.now(timezone.utc).timestamp())}),
+        REFRESH_TOKEN_TTL_SECONDS,
+        jitter=False,
+    )
     return token
 
 
@@ -165,7 +170,7 @@ def _block_token(token: str) -> None:
         payload = json.loads(_b64decode(token.split(".", 1)[0]))
         remaining = int(payload.get("exp", 0)) - int(datetime.now(timezone.utc).timestamp())
         if remaining > 0:
-            set_text(f"auth:blocklist:{stable_hash(token)}", "1", remaining)
+            set_text(f"auth:blocklist:{stable_hash(token)}", "1", remaining, jitter=False)
     except Exception:
         pass
 
@@ -179,7 +184,12 @@ def logout(token: str) -> None:
 def send_verification_email_for_user(user_id: str, email: str) -> None:
     from app.shared.email import send_verification_email
     token = secrets.token_urlsafe(32)
-    set_text(f"auth:verify_email:{token}", json.dumps({"user_id": user_id, "email": email}), EMAIL_TOKEN_TTL_SECONDS)
+    set_text(
+        f"auth:verify_email:{token}",
+        json.dumps({"user_id": user_id, "email": email}),
+        EMAIL_TOKEN_TTL_SECONDS,
+        jitter=False,
+    )
     send_verification_email(email, token)
 
 
@@ -213,7 +223,12 @@ def request_password_reset(email: str) -> None:
     if user is None:
         return  # 不泄露邮箱是否注册
     token = secrets.token_urlsafe(32)
-    set_text(f"auth:reset_pwd:{token}", json.dumps({"user_id": user.user_id}), RESET_TOKEN_TTL_SECONDS)
+    set_text(
+        f"auth:reset_pwd:{token}",
+        json.dumps({"user_id": user.user_id}),
+        RESET_TOKEN_TTL_SECONDS,
+        jitter=False,
+    )
     send_password_reset_email(normalized, token)
 
 
@@ -263,7 +278,12 @@ def request_email_change(user_id: str, current_password: str, new_email: str) ->
         if existing is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被使用")
     token = secrets.token_urlsafe(32)
-    set_text(f"auth:change_email:{token}", json.dumps({"user_id": user_id, "new_email": normalized}), EMAIL_TOKEN_TTL_SECONDS)
+    set_text(
+        f"auth:change_email:{token}",
+        json.dumps({"user_id": user_id, "new_email": normalized}),
+        EMAIL_TOKEN_TTL_SECONDS,
+        jitter=False,
+    )
     send_change_email_verification(normalized, token)
 
 
