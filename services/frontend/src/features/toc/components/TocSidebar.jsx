@@ -32,7 +32,7 @@ function TocSidebar({
   const previousTocOpenRef = useRef(tocOpen)
   const previousTocSectionOpenRef = useRef(tocSectionOpen)
 
-  const collapseTopLevelItems = useCallback(() => {
+  const collapseBranchItems = useCallback(() => {
     setCollapsedState(prev => {
       if (!tocSignature) return prev
 
@@ -40,7 +40,7 @@ function TocSidebar({
       let changed = false
 
       tocItems.forEach((item, index) => {
-        if (item.level !== 1 || !(tocItems[index + 1]?.level > item.level)) return
+        if (!(tocItems[index + 1]?.level > item.level)) return
         if (!next.has(item.id)) {
           next.add(item.id)
           changed = true
@@ -98,14 +98,14 @@ function TocSidebar({
   useEffect(() => {
     const wasOpen = previousTocOpenRef.current
     previousTocOpenRef.current = tocOpen
-    if (!wasOpen && tocOpen) collapseTopLevelItems()
-  }, [collapseTopLevelItems, tocOpen])
+    if (!wasOpen && tocOpen) collapseBranchItems()
+  }, [collapseBranchItems, tocOpen])
 
   useEffect(() => {
     const wasOpen = previousTocSectionOpenRef.current
     previousTocSectionOpenRef.current = tocSectionOpen
-    if (!wasOpen && tocSectionOpen) collapseTopLevelItems()
-  }, [collapseTopLevelItems, tocSectionOpen])
+    if (!wasOpen && tocSectionOpen) collapseBranchItems()
+  }, [collapseBranchItems, tocSectionOpen])
 
   const clampWidth = useCallback((nextWidth) => {
     return Math.min(maxWidth, Math.max(minWidth, nextWidth))
