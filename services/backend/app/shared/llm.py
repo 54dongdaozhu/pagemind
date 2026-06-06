@@ -17,7 +17,16 @@ from app.core.config import (
     VISION_LLM_BASE_URL,
     VISION_LLM_MODEL,
 )
-from app.shared.cache import PROMPT_CACHE_TTL_SECONDS, get_text, set_text, stable_hash
+from app.shared.cache import (
+    PROMPT_CACHE_TTL_SECONDS,
+    get_or_set_text,
+    get_text,
+    redis_available,
+    release_lock,
+    set_text,
+    stable_hash,
+    try_acquire_lock,
+)
 from app.shared.circuit_breaker import CircuitBreaker, CircuitOpenError
 from app.shared import db_log
 
@@ -75,10 +84,26 @@ def call_deepseek(
     purpose: str | None = None,
 ) -> str:
     cache_key = f"cache:prompt:{stable_hash({'model': _MODEL, 'messages': messages, 'temperature': temperature, 'json_mode': json_mode})}"
-    cached = get_text(cache_key)
-    if cached is not None:
-        return cached
+    result = get_or_set_text(
+        cache_key,
+        lambda: _call_deepseek_uncached(messages, temperature, json_mode, purpose),
+        PROMPT_CACHE_TTL_SECONDS,
+        lock_ttl_seconds=130,
+        wait_timeout_seconds=125.0,
+        retry_interval_seconds=0.1,
+        cache_null=False,
+    )
+    if result is None:
+        raise HTTPException(status_code=502, detail="LLM 返回了空内容，请稍后重试。")
+    return result
 
+
+def _call_deepseek_uncached(
+    messages: list,
+    temperature: float,
+    json_mode: bool,
+    purpose: str | None,
+) -> str:
     try:
         _breaker.before_call()
     except CircuitOpenError:
@@ -102,7 +127,6 @@ def call_deepseek(
             latency_ms=int((time.monotonic() - start) * 1000),
             success=True,
         )
-        set_text(cache_key, content, PROMPT_CACHE_TTL_SECONDS)
         return content
     except requests.exceptions.RequestException as e:
         _breaker.record_failure()
@@ -122,7 +146,6 @@ def call_deepseek(
                     latency_ms=int((time.monotonic() - start) * 1000),
                     success=True,
                 )
-                set_text(cache_key, content, PROMPT_CACHE_TTL_SECONDS)
                 return content
             except requests.exceptions.RequestException as fe:
                 db_log.log_llm_call(
@@ -211,9 +234,26 @@ def call_deepseek_stream(
         yield from _stream_cached_text(cached)
         return
 
+    lock_key = f"lock:{cache_key}"
+    lock_token = try_acquire_lock(lock_key, ttl_seconds=70)
+    if lock_token is None and redis_available():
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            cached = get_text(cache_key)
+            if cached is not None:
+                yield from _stream_cached_text(cached)
+                return
+        lock_token = try_acquire_lock(lock_key, ttl_seconds=70)
+        if lock_token is None:
+            yield "\n\n[错误] 相同请求正在处理中，请稍后重试。"
+            return
+
     try:
         _breaker.before_call()
     except CircuitOpenError:
+        if lock_token is not None:
+            release_lock(lock_key, lock_token)
         yield "\n\n[错误] LLM 服务暂时不可用，请稍后重试。"
         return
 
@@ -274,6 +314,8 @@ def call_deepseek_stream(
         _breaker.record_failure()
         yield f"\n\n[错误] LLM 调用失败: {str(e)}"
     finally:
+        if lock_token is not None:
+            release_lock(lock_key, lock_token)
         db_log.log_llm_call(
             provider=_PROVIDER,
             model=_MODEL,

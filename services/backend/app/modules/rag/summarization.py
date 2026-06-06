@@ -3,7 +3,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 
-from app.shared.cache import ANALYSIS_REPORT_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
+from app.shared.cache import (
+    ANALYSIS_REPORT_CACHE_TTL_SECONDS,
+    get_json,
+    redis_available,
+    release_lock,
+    set_json,
+    stable_hash,
+    try_acquire_lock,
+)
 from app.shared.llm import call_deepseek
 from app.modules.rag.chunking import normalize_text
 from app.modules.rag.prompts import FULL_DOCUMENT_CHUNK_PROMPT, FULL_DOCUMENT_MERGE_PROMPT, SUMMARY_SYSTEM_PROMPT
@@ -136,6 +144,39 @@ def summarize_full_document(user_id: str, doc_id: str, request: str = "") -> dic
     if isinstance(cached, dict):
         return cached
 
+    lock_key = f"lock:{cache_key}"
+    lock_token = try_acquire_lock(lock_key, ttl_seconds=210)
+    if lock_token is None and redis_available():
+        deadline = time.monotonic() + 205.0
+        while time.monotonic() < deadline:
+            cached = get_json(cache_key)
+            if isinstance(cached, dict):
+                return cached
+            lock_token = try_acquire_lock(lock_key, ttl_seconds=210)
+            if lock_token is not None:
+                break
+            time.sleep(0.1)
+
+    if lock_token is None and redis_available():
+        fallback = get_document_summary(user_id, doc_id) or ""
+        logger.warning("[FullSummary] same request still running for doc=%s", doc_id)
+        return {"summary": fallback, "chunk_count": 0, "batch_count": 0}
+
+    if lock_token is None:
+        return _generate_full_document_summary(user_id, doc_id, request, cache_key)
+
+    try:
+        return _generate_full_document_summary(user_id, doc_id, request, cache_key)
+    finally:
+        release_lock(lock_key, lock_token)
+
+
+def _generate_full_document_summary(
+    user_id: str,
+    doc_id: str,
+    request: str,
+    cache_key: str,
+) -> dict:
     rows = list_document_chunks(user_id, doc_id)
     if not rows:
         summary = get_document_summary(user_id, doc_id)
