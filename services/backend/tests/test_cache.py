@@ -1,5 +1,8 @@
 import json
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from app.shared import cache
@@ -24,36 +27,46 @@ class FakeRedis:
         self.values = {}
         self.ttls = {}
         self.setex_calls = []
+        self._mutex = threading.Lock()
 
     def get(self, key):
-        return self.values.get(key)
+        with self._mutex:
+            return self.values.get(key)
+
+    def ping(self):
+        return True
 
     def mget(self, keys):
-        return [self.values.get(key) for key in keys]
+        with self._mutex:
+            return [self.values.get(key) for key in keys]
 
     def setex(self, key, ttl, value):
-        self.values[key] = value
-        self.ttls[key] = ttl
-        self.setex_calls.append((key, ttl, value))
+        with self._mutex:
+            self.values[key] = value
+            self.ttls[key] = ttl
+            self.setex_calls.append((key, ttl, value))
         return True
 
     def set(self, key, value, nx=False, ex=None):
-        if nx and key in self.values:
-            return False
-        self.values[key] = value
-        self.ttls[key] = ex
-        return True
+        with self._mutex:
+            if nx and key in self.values:
+                return False
+            self.values[key] = value
+            self.ttls[key] = ex
+            return True
 
     def eval(self, _script, _num_keys, key, token):
-        if self.values.get(key) == token:
-            del self.values[key]
-            return 1
-        return 0
+        with self._mutex:
+            if self.values.get(key) == token:
+                del self.values[key]
+                return 1
+            return 0
 
     def delete(self, key):
-        existed = key in self.values
-        self.values.pop(key, None)
-        return int(existed)
+        with self._mutex:
+            existed = key in self.values
+            self.values.pop(key, None)
+            return int(existed)
 
     def pipeline(self, transaction=False):
         return FakePipeline(self)
@@ -129,6 +142,53 @@ class CacheTest(unittest.TestCase):
         self.assertEqual(value, "hello")
         self.assertEqual(redis.values["summary"], "hello")
         self.assertEqual(redis.ttls["summary"], 60)
+
+    def test_get_or_set_json_coalesces_concurrent_cache_misses(self):
+        redis = FakeRedis()
+        barrier = threading.Barrier(6)
+        loader_calls = 0
+        loader_mutex = threading.Lock()
+
+        def loader():
+            nonlocal loader_calls
+            with loader_mutex:
+                loader_calls += 1
+            time.sleep(0.08)
+            return {"value": 42}
+
+        def read_value(_index):
+            barrier.wait()
+            return cache.get_or_set_json(
+                "hot-key",
+                loader,
+                wait_timeout_seconds=0.5,
+                retry_interval_seconds=0.01,
+                jitter=False,
+            )
+
+        with (
+            patch("app.shared.cache.get_redis", return_value=redis),
+            ThreadPoolExecutor(max_workers=6) as executor,
+        ):
+            results = list(executor.map(read_value, range(6)))
+
+        self.assertEqual(results, [{"value": 42}] * 6)
+        self.assertEqual(loader_calls, 1)
+
+    def test_get_or_set_json_does_not_wait_when_redis_is_unavailable(self):
+        with (
+            patch("app.shared.cache._get_json_cached_value", return_value=(False, None)),
+            patch("app.shared.cache.try_acquire_lock", return_value=None),
+            patch("app.shared.cache.redis_available", return_value=False),
+            patch("app.shared.cache.time.sleep", side_effect=AssertionError("must not wait")),
+        ):
+            result = cache.get_or_set_json(
+                "key",
+                lambda: {"fallback": True},
+                wait_timeout_seconds=60,
+            )
+
+        self.assertEqual(result, {"fallback": True})
 
     def test_release_lock_only_deletes_matching_token(self):
         redis = FakeRedis()

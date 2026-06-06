@@ -239,6 +239,9 @@ def get_or_set_json(
         finally:
             release_lock(lock_name, token)
 
+    if not redis_available():
+        return loader()
+
     deadline = time.monotonic() + wait_timeout_seconds
     while time.monotonic() < deadline:
         time.sleep(retry_interval_seconds)
@@ -286,6 +289,9 @@ def get_or_set_text(
             return value
         finally:
             release_lock(lock_name, token)
+
+    if not redis_available():
+        return loader()
 
     deadline = time.monotonic() + wait_timeout_seconds
     while time.monotonic() < deadline:
