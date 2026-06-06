@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import delete, func, select
 
 from app.core.database import DocumentVersion, RagChunk, RagDocument, get_db
-from app.shared.cache import CONTENT_CACHE_TTL_SECONDS, delete_pattern, get_json, get_text, set_json, set_text
+from app.shared.cache import CONTENT_CACHE_TTL_SECONDS, delete_pattern, get_or_set_json, get_or_set_text
 
 
 def scoped_doc_id(user_id: str, doc_id: str) -> str:
@@ -189,41 +189,47 @@ def get_persisted_document_render(user_id: str, doc_id: str) -> dict | None:
 def get_document_summary(user_id: str, doc_id: str) -> str:
     storage_doc_id = scoped_doc_id(user_id, doc_id)
     cache_key = f"cache:content:{storage_doc_id}:summary"
-    cached = get_text(cache_key)
-    if cached is not None:
-        return cached
 
-    with get_db() as db:
-        document = db.get(RagDocument, storage_doc_id)
-    summary = document.summary if document else ""
-    set_text(cache_key, summary, CONTENT_CACHE_TTL_SECONDS)
-    return summary
+    def load_summary() -> str:
+        with get_db() as db:
+            document = db.get(RagDocument, storage_doc_id)
+        return document.summary if document else ""
+
+    return get_or_set_text(
+        cache_key,
+        load_summary,
+        CONTENT_CACHE_TTL_SECONDS,
+        wait_timeout_seconds=1.0,
+    ) or ""
 
 
 def list_document_chunks(user_id: str, doc_id: str):
     storage_doc_id = scoped_doc_id(user_id, doc_id)
     cache_key = f"cache:content:{storage_doc_id}:chunks"
-    cached = get_json(cache_key)
-    if cached is not None:
-        return cached
 
-    with get_db() as db:
-        chunks = db.execute(
-            select(RagChunk)
-            .where(RagChunk.doc_id == storage_doc_id)
-            .order_by(RagChunk.chunk_index.asc())
-        ).scalars()
-        rows = [
-            {
-                "chunk_index": chunk.chunk_index,
-                "content": chunk.content,
-                # JSON 类型字段，已由 SQLAlchemy 反序列化为 list（或 None）
-                "embedding": chunk.embedding_json,
-            }
-            for chunk in chunks
-        ]
-    set_json(cache_key, rows, CONTENT_CACHE_TTL_SECONDS)
-    return rows
+    def load_chunks() -> list[dict]:
+        with get_db() as db:
+            chunks = db.execute(
+                select(RagChunk)
+                .where(RagChunk.doc_id == storage_doc_id)
+                .order_by(RagChunk.chunk_index.asc())
+            ).scalars()
+            return [
+                {
+                    "chunk_index": chunk.chunk_index,
+                    "content": chunk.content,
+                    # JSON 类型字段，已由 SQLAlchemy 反序列化为 list（或 None）
+                    "embedding": chunk.embedding_json,
+                }
+                for chunk in chunks
+            ]
+
+    return get_or_set_json(
+        cache_key,
+        load_chunks,
+        CONTENT_CACHE_TTL_SECONDS,
+        wait_timeout_seconds=1.0,
+    ) or []
 
 
 def _hash_text(text: str) -> str:

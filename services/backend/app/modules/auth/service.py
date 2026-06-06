@@ -27,7 +27,7 @@ from app.shared.cache import (
     RESET_TOKEN_TTL_SECONDS,
     USER_CACHE_TTL_SECONDS,
     delete_pattern,
-    get_json,
+    get_or_set_json,
     get_redis,
     get_text,
     set_json,
@@ -502,28 +502,34 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的登录凭证")
 
     cache_key = f"cache:user_auth:{stable_hash(token)}"
-    cached = get_json(cache_key)
-    if cached is not None and cached.get("user_id") == user_id:
-        return User(
-            user_id=cached["user_id"],
-            username=cached.get("username"),
-            email=cached.get("email"),
-            password_hash=cached.get("password_hash"),
-            email_verified=cached.get("email_verified", True),
-            created_at=None,
-            updated_at=None,
-        )
+    def load_user() -> dict | None:
+        with get_db() as db:
+            user = db.get(User, user_id)
+            if user is None:
+                return None
+            return {
+                "user_id": user.user_id,
+                "username": user.username,
+                "email": user.email,
+                "password_hash": user.password_hash,
+                "email_verified": user.email_verified,
+            }
 
-    with get_db() as db:
-        user = db.get(User, user_id)
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
-        cached_user = {
-            "user_id": user.user_id,
-            "username": user.username,
-            "email": user.email,
-            "password_hash": user.password_hash,
-            "email_verified": user.email_verified,
-        }
-        set_json(cache_key, cached_user, USER_CACHE_TTL_SECONDS)
-        return user
+    cached = get_or_set_json(
+        cache_key,
+        load_user,
+        USER_CACHE_TTL_SECONDS,
+        wait_timeout_seconds=1.0,
+    )
+    if cached is None or cached.get("user_id") != user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+
+    return User(
+        user_id=cached["user_id"],
+        username=cached.get("username"),
+        email=cached.get("email"),
+        password_hash=cached.get("password_hash"),
+        email_verified=cached.get("email_verified", True),
+        created_at=None,
+        updated_at=None,
+    )

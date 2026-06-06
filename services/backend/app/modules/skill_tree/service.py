@@ -14,7 +14,7 @@ from app.modules.skill_tree.aggregator import (
 )
 from app.modules.skill_tree.prompts import SKILL_TREE_ANALYZE_PROMPT, SKILL_TREE_FINALIZE_PROMPT
 from app.shared import db_log
-from app.shared.cache import SKILL_TREE_TTL_SECONDS, delete_key, get_json, set_json
+from app.shared.cache import SKILL_TREE_TTL_SECONDS, delete_key, get_or_set_json
 from app.shared.llm import call_deepseek
 
 
@@ -36,27 +36,26 @@ def _activity_key(user_id: str) -> str:
 
 
 def get_latest_snapshot(user_id: str) -> dict | None:
-    cached = get_json(_cache_key(user_id))
-    if cached is not None:
-        return cached
+    def load_snapshot() -> dict | None:
+        with get_db() as db:
+            row = db.execute(
+                select(SkillTreeSnapshot)
+                .where(
+                    SkillTreeSnapshot.user_id == user_id,
+                    SkillTreeSnapshot.status == "ready",
+                )
+                .order_by(SkillTreeSnapshot.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
 
-    with get_db() as db:
-        row = db.execute(
-            select(SkillTreeSnapshot)
-            .where(
-                SkillTreeSnapshot.user_id == user_id,
-                SkillTreeSnapshot.status == "ready",
-            )
-            .order_by(SkillTreeSnapshot.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+        return _snapshot_to_dict(row) if row is not None else None
 
-    if row is None:
-        return None
-
-    result = _snapshot_to_dict(row)
-    set_json(_cache_key(user_id), result, SKILL_TREE_TTL_SECONDS)
-    return result
+    return get_or_set_json(
+        _cache_key(user_id),
+        load_snapshot,
+        SKILL_TREE_TTL_SECONDS,
+        wait_timeout_seconds=1.0,
+    )
 
 
 _GENERATING_TIMEOUT_SECONDS = 300  # worker restart leaves snapshots stuck forever

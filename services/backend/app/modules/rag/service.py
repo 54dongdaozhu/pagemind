@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from app.modules.rag.schemas import RagSource
 from app.shared.llm import call_deepseek
 from app.core.config import EMBEDDING_MODEL
-from app.shared.cache import RAG_QUERY_CACHE_TTL_SECONDS, get_json, set_json, stable_hash
+from app.shared.cache import RAG_QUERY_CACHE_TTL_SECONDS, get_json, get_or_set_json, set_json, stable_hash
 from app.shared import db_log
 from app.shared.job_queue import enqueue_job
 from app.modules.rag.chunking import normalize_text, split_text_for_rag
@@ -317,20 +317,24 @@ def _enrich_indexed_document(
 def retrieve_relevant_chunks(user_id: str, doc_id: str, question: str, top_k: int = 3) -> list[RagSource]:
     top_k = max(1, min(top_k, 8))
     cache_key = f"cache:rag_query:u:{user_id}:d:{doc_id}:{stable_hash({'question': question, 'top_k': top_k})}"
-    cached = get_json(cache_key)
-    if cached is not None:
-        return [RagSource(**item) for item in cached]
 
-    storage_doc_id = scoped_doc_id(user_id, doc_id)
-    chroma_results = retrieve_by_chroma(storage_doc_id, question, top_k)
-    if chroma_results:
-        set_json(cache_key, [_source_to_dict(item) for item in chroma_results], RAG_QUERY_CACHE_TTL_SECONDS)
-        return chroma_results
+    def load_sources() -> list[dict]:
+        storage_doc_id = scoped_doc_id(user_id, doc_id)
+        chroma_results = retrieve_by_chroma(storage_doc_id, question, top_k)
+        if chroma_results:
+            return [_source_to_dict(item) for item in chroma_results]
 
-    rows = list_document_chunks(user_id, doc_id)
-    sources = _retrieve_by_keyword(rows, question, top_k)
-    set_json(cache_key, [_source_to_dict(item) for item in sources], RAG_QUERY_CACHE_TTL_SECONDS)
-    return sources
+        rows = list_document_chunks(user_id, doc_id)
+        return [_source_to_dict(item) for item in _retrieve_by_keyword(rows, question, top_k)]
+
+    cached = get_or_set_json(
+        cache_key,
+        load_sources,
+        RAG_QUERY_CACHE_TTL_SECONDS,
+        lock_ttl_seconds=15,
+        wait_timeout_seconds=10.0,
+    ) or []
+    return [RagSource(**item) for item in cached]
 
 
 def answer_with_rag(user_id: str, doc_id: str, question: str, top_k: int = 3) -> tuple[str, list[RagSource]]:

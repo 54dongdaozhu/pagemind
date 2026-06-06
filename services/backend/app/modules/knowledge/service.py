@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, select
 
 from app.core.database import KnowledgePoint, StudyRecord, StudyStatusHistory, get_db
 from app.modules.knowledge.domain import LEARNING_THRESHOLD, STATUS_KNOWN, STATUS_LEARNING, STATUS_UNKNOWN
-from app.shared.cache import delete_key, get_json, get_json_many, set_json, set_json_many, stable_hash
+from app.shared.cache import delete_key, get_json_many, get_or_set_json, set_json, set_json_many, stable_hash
 
 _KP_STATUS_TTL = 5 * 60
 _STATS_TTL = 5 * 60
@@ -294,23 +294,27 @@ def get_status_batch(user_id: str, kp_texts: list[str]):
 
 def get_stats(user_id: str):
     key = _stats_key(user_id)
-    cached = get_json(key)
-    if cached is not None:
-        return cached
 
-    with get_db() as db:
-        rows = db.execute(
-            select(StudyRecord.status, func.count())
-            .select_from(StudyRecord)
-            .where(StudyRecord.user_id == user_id)
-            .group_by(StudyRecord.status)
-        ).all()
+    def load_stats() -> dict:
+        with get_db() as db:
+            rows = db.execute(
+                select(StudyRecord.status, func.count())
+                .select_from(StudyRecord)
+                .where(StudyRecord.user_id == user_id)
+                .group_by(StudyRecord.status)
+            ).all()
 
-    stats = {STATUS_UNKNOWN: 0, STATUS_LEARNING: 0, STATUS_KNOWN: 0}
-    for status, count in rows:
-        stats[status] = count
-    set_json(key, stats, _STATS_TTL)
-    return stats
+        stats = {STATUS_UNKNOWN: 0, STATUS_LEARNING: 0, STATUS_KNOWN: 0}
+        for record_status, count in rows:
+            stats[record_status] = count
+        return stats
+
+    return get_or_set_json(
+        key,
+        load_stats,
+        _STATS_TTL,
+        wait_timeout_seconds=1.0,
+    )
 
 
 def reset_all(user_id: str):

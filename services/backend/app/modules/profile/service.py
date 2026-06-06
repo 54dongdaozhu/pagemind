@@ -12,7 +12,7 @@ except ImportError:
 from sqlalchemy import select
 
 from app.core.database import UserProfile, get_db
-from app.shared.cache import USER_PROFILE_TTL_SECONDS, get_json, get_redis, set_json
+from app.shared.cache import USER_PROFILE_TTL_SECONDS, get_or_set_json, get_redis, set_json
 from app.shared.llm import call_deepseek
 
 
@@ -240,30 +240,32 @@ def analyze_and_save(user_id: str, background_text: str) -> dict:
 
 def get_profile(user_id: str) -> dict | None:
     """Return cached profile or load from DB."""
-    cached = get_json(_profile_cache_key(user_id))
-    if cached is not None:
-        return cached
+    def load_profile() -> dict | None:
+        with get_db() as db:
+            row = db.execute(
+                select(UserProfile).where(UserProfile.user_id == user_id)
+            ).scalar_one_or_none()
 
-    with get_db() as db:
-        row = db.execute(
-            select(UserProfile).where(UserProfile.user_id == user_id)
-        ).scalar_one_or_none()
+        if row is None:
+            return None
 
-    if row is None:
-        return None
+        return {
+            "background_text": row.background_text,
+            "identity": row.identity,
+            "purpose": row.purpose,
+            "learning_goals": row.learning_goals or [],
+            "skill_level": row.skill_level,
+            "tech_stack": row.tech_stack or [],
+            "knowledge_gaps": row.knowledge_gaps or [],
+            "learning_style": row.learning_style,
+            "depth_preference": row.depth_preference,
+            "urgency": row.urgency,
+            "domain_focus": row.domain_focus or [],
+        }
 
-    profile = {
-        "background_text": row.background_text,
-        "identity": row.identity,
-        "purpose": row.purpose,
-        "learning_goals": row.learning_goals or [],
-        "skill_level": row.skill_level,
-        "tech_stack": row.tech_stack or [],
-        "knowledge_gaps": row.knowledge_gaps or [],
-        "learning_style": row.learning_style,
-        "depth_preference": row.depth_preference,
-        "urgency": row.urgency,
-        "domain_focus": row.domain_focus or [],
-    }
-    set_json(_profile_cache_key(user_id), profile, USER_PROFILE_TTL_SECONDS)
-    return profile
+    return get_or_set_json(
+        _profile_cache_key(user_id),
+        load_profile,
+        USER_PROFILE_TTL_SECONDS,
+        wait_timeout_seconds=1.0,
+    )
