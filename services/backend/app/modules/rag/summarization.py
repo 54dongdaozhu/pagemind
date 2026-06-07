@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from app.shared.cache import (
     ANALYSIS_REPORT_CACHE_TTL_SECONDS,
     get_json,
+    maintain_lock,
     redis_available,
-    release_lock,
     set_json,
     stable_hash,
     try_acquire_lock,
@@ -15,7 +15,7 @@ from app.shared.cache import (
 from app.shared.llm import call_deepseek
 from app.modules.rag.chunking import normalize_text
 from app.modules.rag.prompts import FULL_DOCUMENT_CHUNK_PROMPT, FULL_DOCUMENT_MERGE_PROMPT, SUMMARY_SYSTEM_PROMPT
-from app.modules.rag.repository import get_document_summary, list_document_chunks
+from app.modules.rag.repository import get_document_cache_version, get_document_summary, list_document_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,14 @@ def _full_summary_status_key(user_id: str, doc_id: str) -> str:
     return f"summary:full:status:user:{user_id}:doc:{doc_id}"
 
 
-def _full_summary_cache_key(user_id: str, doc_id: str, request: str) -> str:
-    return f"summary:full:result:{stable_hash({'user_id': user_id, 'doc_id': doc_id, 'request': request})}"
+def _full_summary_cache_key(user_id: str, doc_id: str, version_id: str, request: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "doc_id": doc_id,
+        "version_id": version_id,
+        "request": request,
+    }
+    return f"summary:full:result:{stable_hash(payload)}"
 
 
 def _save_full_summary_status(user_id: str, doc_id: str, status: dict) -> None:
@@ -139,7 +145,8 @@ def _merge_partial_summaries(partials: list[str], request: str = "") -> str:
 
 
 def summarize_full_document(user_id: str, doc_id: str, request: str = "") -> dict:
-    cache_key = _full_summary_cache_key(user_id, doc_id, request)
+    version_id = get_document_cache_version(user_id, doc_id)
+    cache_key = _full_summary_cache_key(user_id, doc_id, version_id, request)
     cached = get_json(cache_key)
     if isinstance(cached, dict):
         return cached
@@ -165,10 +172,8 @@ def summarize_full_document(user_id: str, doc_id: str, request: str = "") -> dic
     if lock_token is None:
         return _generate_full_document_summary(user_id, doc_id, request, cache_key)
 
-    try:
+    with maintain_lock(lock_key, lock_token, 210):
         return _generate_full_document_summary(user_id, doc_id, request, cache_key)
-    finally:
-        release_lock(lock_key, lock_token)
 
 
 def _generate_full_document_summary(

@@ -19,6 +19,15 @@ def public_doc_id(user_id: str, storage_doc_id: str) -> str:
     return storage_doc_id
 
 
+def get_document_cache_version(user_id: str, doc_id: str) -> str:
+    storage_doc_id = scoped_doc_id(user_id, doc_id)
+    with get_db() as db:
+        document = db.get(RagDocument, storage_doc_id)
+    if document is None or document.user_id != user_id:
+        return "missing"
+    return document.current_version_id or "unversioned"
+
+
 def save_indexed_document(
     user_id: str,
     doc_id: str,
