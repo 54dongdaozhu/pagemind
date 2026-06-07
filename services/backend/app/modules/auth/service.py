@@ -39,6 +39,14 @@ security = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 
+def _user_auth_cache_key(user_id: str, token: str) -> str:
+    return f"cache:user_auth:u:{user_id}:t:{stable_hash(token)}"
+
+
+def _invalidate_user_auth_cache(user_id: str) -> None:
+    delete_pattern(f"cache:user_auth:u:{user_id}:t:*")
+
+
 def _b64encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -207,6 +215,7 @@ def verify_email_token(token: str) -> None:
         user.email_verified = True
         user.updated_at = now
         db.commit()
+    _invalidate_user_auth_cache(data["user_id"])
     try:
         get_redis().delete(key)
     except Exception:
@@ -246,6 +255,7 @@ def reset_password_with_token(token: str, new_password: str) -> None:
         user.password_hash = hash_password(new_password)
         user.updated_at = now
         db.commit()
+    _invalidate_user_auth_cache(data["user_id"])
     try:
         get_redis().delete(key)
     except Exception:
@@ -264,7 +274,7 @@ def change_password(user_id: str, current_password: str, new_password: str, curr
         user.updated_at = now
         db.commit()
     _block_token(current_token)
-    delete_pattern("cache:user_auth:*")
+    _invalidate_user_auth_cache(user_id)
 
 
 def request_email_change(user_id: str, current_password: str, new_email: str) -> None:
@@ -309,7 +319,7 @@ def confirm_email_change(token: str) -> None:
         get_redis().delete(key)
     except Exception:
         pass
-    delete_pattern("cache:user_auth:*")
+    _invalidate_user_auth_cache(data["user_id"])
 
 
 # ── 注册 / 登录 ───────────────────────────────────────────────────────────────
@@ -395,6 +405,7 @@ def ensure_builtin_user() -> None:
     if not username or not BUILTIN_PASSWORD:
         return
 
+    updated_user_id = None
     with get_db() as db:
         user = db.execute(
             select(User).where((User.username == username) | (User.email == email))
@@ -412,12 +423,15 @@ def ensure_builtin_user() -> None:
                 )
             )
         else:
+            updated_user_id = user.user_id
             user.username = username
             user.email = email
             user.password_hash = hash_password(BUILTIN_PASSWORD)
             user.email_verified = True
             user.updated_at = now
         db.commit()
+    if updated_user_id is not None:
+        _invalidate_user_auth_cache(updated_user_id)
 
 
 def delete_user_account(user_id: str, password: str) -> None:
@@ -461,6 +475,7 @@ def delete_user_account(user_id: str, password: str) -> None:
         db.execute(sa_text("DELETE FROM documents WHERE user_id = :uid"), {"uid": user_id})
         db.execute(sa_text("DELETE FROM users WHERE user_id = :uid"), {"uid": user_id})
         db.commit()
+    _invalidate_user_auth_cache(user_id)
 
 
 def export_user_data(user_id: str) -> dict:
@@ -501,7 +516,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的登录凭证")
 
-    cache_key = f"cache:user_auth:{stable_hash(token)}"
+    cache_key = _user_auth_cache_key(user_id, token)
     def load_user() -> dict | None:
         with get_db() as db:
             user = db.get(User, user_id)
