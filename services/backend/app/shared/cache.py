@@ -2,8 +2,11 @@ import hashlib
 import json
 import logging
 import random
+import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any, Callable
 
@@ -22,6 +25,11 @@ DEFAULT_CACHE_RETRY_INTERVAL_SECONDS = 0.03
 DEFAULT_TTL_JITTER_RATIO = 0.1
 NULL_JSON_CACHE_VALUE = {"__cache_null__": True}
 NULL_TEXT_CACHE_VALUE = "__cache_null__"
+
+
+class CacheLoadInProgressError(RuntimeError):
+    pass
+
 
 PROMPT_CACHE_TTL_SECONDS = 60 * 60
 EMBEDDING_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30
@@ -206,6 +214,82 @@ def release_lock(lock_key: str, token: str) -> bool:
         return False
 
 
+def renew_lock(lock_key: str, token: str, ttl_seconds: int) -> bool:
+    script = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("expire", KEYS[1], ARGV[2])
+    end
+    return 0
+    """
+    try:
+        return bool(get_redis().eval(script, 1, lock_key, token, ttl_seconds))
+    except Exception as exc:
+        logger.debug("Redis cache lock renewal failed for %s: %s", lock_key, exc)
+        return False
+
+
+@contextmanager
+def maintain_lock(lock_key: str, token: str, ttl_seconds: int) -> Iterator[None]:
+    stop = threading.Event()
+    interval = max(0.1, ttl_seconds / 3)
+
+    def renew_until_stopped() -> None:
+        while not stop.wait(interval):
+            if not renew_lock(lock_key, token, ttl_seconds):
+                logger.warning("Redis cache lock renewal failed for %s", lock_key)
+
+    renewer = threading.Thread(
+        target=renew_until_stopped,
+        name=f"cache-lock-renewer:{lock_key[-40:]}",
+        daemon=True,
+    )
+    renewer.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        renewer.join(timeout=min(1.0, interval))
+        release_lock(lock_key, token)
+
+
+def _wait_for_json_value_or_lock(
+    key: str,
+    lock_name: str,
+    lock_ttl_seconds: int,
+    wait_timeout_seconds: float,
+    retry_interval_seconds: float,
+) -> tuple[bool, Any | None, str | None]:
+    deadline = time.monotonic() + wait_timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(retry_interval_seconds)
+        hit, value = _get_json_cached_value(key)
+        if hit:
+            return True, value, None
+        token = try_acquire_lock(lock_name, lock_ttl_seconds)
+        if token:
+            return False, None, token
+    return False, None, try_acquire_lock(lock_name, lock_ttl_seconds)
+
+
+def _wait_for_text_value_or_lock(
+    key: str,
+    lock_name: str,
+    lock_ttl_seconds: int,
+    wait_timeout_seconds: float,
+    retry_interval_seconds: float,
+) -> tuple[bool, str | None, str | None]:
+    deadline = time.monotonic() + wait_timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(retry_interval_seconds)
+        hit, value = _get_text_cached_value(key)
+        if hit:
+            return True, value, None
+        token = try_acquire_lock(lock_name, lock_ttl_seconds)
+        if token:
+            return False, None, token
+    return False, None, try_acquire_lock(lock_name, lock_ttl_seconds)
+
+
 def get_or_set_json(
     key: str,
     loader: Callable[[], Any],
@@ -225,36 +309,33 @@ def get_or_set_json(
 
     lock_name = lock_key or f"lock:{key}"
     token = try_acquire_lock(lock_name, lock_ttl_seconds)
-    if token:
-        try:
-            hit, value = _get_json_cached_value(key)
-            if hit:
-                return value
-            value = loader()
-            if value is None and cache_null:
-                set_json_null(key, null_ttl_seconds, jitter=jitter)
-            elif value is not None:
-                set_json(key, value, ttl_seconds, jitter=jitter)
+    if token is None:
+        if not redis_available():
+            return loader()
+        hit, value, token = _wait_for_json_value_or_lock(
+            key,
+            lock_name,
+            lock_ttl_seconds,
+            wait_timeout_seconds,
+            retry_interval_seconds,
+        )
+        if hit:
             return value
-        finally:
-            release_lock(lock_name, token)
+        if token is None:
+            if not redis_available():
+                return loader()
+            raise CacheLoadInProgressError(f"cache value is still loading: {key}")
 
-    if not redis_available():
-        return loader()
-
-    deadline = time.monotonic() + wait_timeout_seconds
-    while time.monotonic() < deadline:
-        time.sleep(retry_interval_seconds)
+    with maintain_lock(lock_name, token, lock_ttl_seconds):
         hit, value = _get_json_cached_value(key)
         if hit:
             return value
-
-    value = loader()
-    if value is None and cache_null:
-        set_json_null(key, null_ttl_seconds, jitter=jitter)
-    elif value is not None:
-        set_json(key, value, ttl_seconds, jitter=jitter)
-    return value
+        value = loader()
+        if value is None and cache_null:
+            set_json_null(key, null_ttl_seconds, jitter=jitter)
+        elif value is not None:
+            set_json(key, value, ttl_seconds, jitter=jitter)
+        return value
 
 
 def get_or_set_text(
@@ -276,36 +357,33 @@ def get_or_set_text(
 
     lock_name = lock_key or f"lock:{key}"
     token = try_acquire_lock(lock_name, lock_ttl_seconds)
-    if token:
-        try:
-            hit, value = _get_text_cached_value(key)
-            if hit:
-                return value
-            value = loader()
-            if value is None and cache_null:
-                set_text_null(key, null_ttl_seconds, jitter=jitter)
-            elif value is not None:
-                set_text(key, value, ttl_seconds, jitter=jitter)
+    if token is None:
+        if not redis_available():
+            return loader()
+        hit, value, token = _wait_for_text_value_or_lock(
+            key,
+            lock_name,
+            lock_ttl_seconds,
+            wait_timeout_seconds,
+            retry_interval_seconds,
+        )
+        if hit:
             return value
-        finally:
-            release_lock(lock_name, token)
+        if token is None:
+            if not redis_available():
+                return loader()
+            raise CacheLoadInProgressError(f"cache value is still loading: {key}")
 
-    if not redis_available():
-        return loader()
-
-    deadline = time.monotonic() + wait_timeout_seconds
-    while time.monotonic() < deadline:
-        time.sleep(retry_interval_seconds)
+    with maintain_lock(lock_name, token, lock_ttl_seconds):
         hit, value = _get_text_cached_value(key)
         if hit:
             return value
-
-    value = loader()
-    if value is None and cache_null:
-        set_text_null(key, null_ttl_seconds, jitter=jitter)
-    elif value is not None:
-        set_text(key, value, ttl_seconds, jitter=jitter)
-    return value
+        value = loader()
+        if value is None and cache_null:
+            set_text_null(key, null_ttl_seconds, jitter=jitter)
+        elif value is not None:
+            set_text(key, value, ttl_seconds, jitter=jitter)
+        return value
 
 
 def delete_key(key: str) -> None:

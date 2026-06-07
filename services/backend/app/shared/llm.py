@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from contextlib import nullcontext
 
 import requests
 from fastapi import HTTPException
@@ -21,8 +22,8 @@ from app.shared.cache import (
     PROMPT_CACHE_TTL_SECONDS,
     get_or_set_text,
     get_text,
+    maintain_lock,
     redis_available,
-    release_lock,
     set_text,
     stable_hash,
     try_acquire_lock,
@@ -249,11 +250,12 @@ def call_deepseek_stream(
             yield "\n\n[错误] 相同请求正在处理中，请稍后重试。"
             return
 
+    lease = maintain_lock(lock_key, lock_token, 70) if lock_token is not None else nullcontext()
+    lease.__enter__()
     try:
         _breaker.before_call()
     except CircuitOpenError:
-        if lock_token is not None:
-            release_lock(lock_key, lock_token)
+        lease.__exit__(None, None, None)
         yield "\n\n[错误] LLM 服务暂时不可用，请稍后重试。"
         return
 
@@ -314,8 +316,7 @@ def call_deepseek_stream(
         _breaker.record_failure()
         yield f"\n\n[错误] LLM 调用失败: {str(e)}"
     finally:
-        if lock_token is not None:
-            release_lock(lock_key, lock_token)
+        lease.__exit__(None, None, None)
         db_log.log_llm_call(
             provider=_PROVIDER,
             model=_MODEL,

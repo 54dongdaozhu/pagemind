@@ -27,6 +27,7 @@ class FakeRedis:
         self.values = {}
         self.ttls = {}
         self.setex_calls = []
+        self.renew_calls = []
         self._mutex = threading.Lock()
 
     def get(self, key):
@@ -55,9 +56,15 @@ class FakeRedis:
             self.ttls[key] = ex
             return True
 
-    def eval(self, _script, _num_keys, key, token):
+    def eval(self, script, _num_keys, key, token, *args):
         with self._mutex:
-            if self.values.get(key) == token:
+            if self.values.get(key) != token:
+                return 0
+            if "expire" in script:
+                self.ttls[key] = args[0]
+                self.renew_calls.append((key, token, args[0]))
+                return 1
+            if "del" in script:
                 del self.values[key]
                 return 1
             return 0
@@ -189,6 +196,42 @@ class CacheTest(unittest.TestCase):
             )
 
         self.assertEqual(result, {"fallback": True})
+
+    def test_get_or_set_json_does_not_load_without_lock_after_timeout(self):
+        loader_calls = []
+        with (
+            patch("app.shared.cache._get_json_cached_value", return_value=(False, None)),
+            patch("app.shared.cache.try_acquire_lock", return_value=None),
+            patch("app.shared.cache.redis_available", return_value=True),
+        ):
+            with self.assertRaises(cache.CacheLoadInProgressError):
+                cache.get_or_set_json(
+                    "busy-key",
+                    lambda: loader_calls.append("called"),
+                    wait_timeout_seconds=0,
+                )
+
+        self.assertEqual(loader_calls, [])
+
+    def test_renew_lock_only_extends_matching_token(self):
+        redis = FakeRedis()
+        with patch("app.shared.cache.get_redis", return_value=redis):
+            token = cache.try_acquire_lock("lock:k", ttl_seconds=2)
+            self.assertFalse(cache.renew_lock("lock:k", "other-token", ttl_seconds=5))
+            self.assertTrue(cache.renew_lock("lock:k", token, ttl_seconds=5))
+
+        self.assertEqual(redis.ttls["lock:k"], 5)
+        self.assertEqual(redis.renew_calls, [("lock:k", token, 5)])
+
+    def test_maintain_lock_renews_and_releases_lease(self):
+        redis = FakeRedis()
+        with patch("app.shared.cache.get_redis", return_value=redis):
+            token = cache.try_acquire_lock("lock:k", ttl_seconds=1)
+            with cache.maintain_lock("lock:k", token, ttl_seconds=1):
+                time.sleep(0.38)
+
+        self.assertGreaterEqual(len(redis.renew_calls), 1)
+        self.assertNotIn("lock:k", redis.values)
 
     def test_release_lock_only_deletes_matching_token(self):
         redis = FakeRedis()

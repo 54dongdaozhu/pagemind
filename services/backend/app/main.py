@@ -3,6 +3,7 @@ import threading
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import ALLOWED_ORIGINS, validate_settings
 from app.core.database import init_db
@@ -20,6 +21,7 @@ from app.modules.plan import router as plan_router
 from app.modules.profile import router as profile_router
 from app.modules.skill_tree import router as skill_tree_router
 from app.modules.rag import router as rag_router
+from app.shared.cache import CacheLoadInProgressError
 
 
 class _ConcurrencyLimitMiddleware:
@@ -57,6 +59,15 @@ def create_app():
     ensure_builtin_user()
 
     _fast_api = FastAPI(title="AI 文档学习助手后端")
+
+    @_fast_api.exception_handler(CacheLoadInProgressError)
+    async def cache_load_in_progress_handler(_request, _exc):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "相同请求正在处理中，请稍后重试。"},
+            headers={"Retry-After": "1"},
+        )
+
     _fast_api.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
